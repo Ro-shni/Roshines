@@ -1,15 +1,14 @@
-
+// ...existing code...
 import { User, Comment, BlogPost } from '../types';
-
-// This service mimics Firebase interactions. 
-// In a real app, you would replace localStorage calls with:
-// await firebase.firestore().collection('...').add(...)
+// dotenv removed — Vite exposes env via import.meta.env in the browser
 
 const DELAY = 600; // Simulate network latency
 
 const ADMIN_CREDS = {
   email: 'roshni.nekkanti@gmail.com',
-  password: '@Swaruparam12'
+  // Vite only exposes variables prefixed with VITE_ at runtime.
+  // Ensure you have VITE_ADMIN_PASSWORD in your .env file.
+  password: (import.meta.env.VITE_ADMIN_PASSWORD ?? '') as string,
 };
 
 const getStorage = (key: string) => {
@@ -21,8 +20,7 @@ const setStorage = (key: string, data: any) => {
   localStorage.setItem(`roshines_db_${key}`, JSON.stringify(data));
 };
 
-// --- Auth Service ---
-
+// ...existing code...
 export const loginUser = async (email: string, password: string): Promise<User> => {
   await new Promise(resolve => setTimeout(resolve, DELAY));
   
@@ -50,6 +48,8 @@ export const loginUser = async (email: string, password: string): Promise<User> 
   const { password: _, ...userInfo } = user; // strip password
   return { ...userInfo, isAdmin: false };
 };
+
+// ...existing code...
 
 export const registerUser = async (name: string, email: string, password: string): Promise<User> => {
   await new Promise(resolve => setTimeout(resolve, DELAY));
