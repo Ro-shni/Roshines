@@ -7,8 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
+  "predeploy": "npm run build",
+  "postbuild": "cp build/index.html build/404.html || true",
+  "deploy": "gh-pages -d build"
   },
   "dependencies": {
     "@google/genai": "^1.31.0",
