@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { 
   PenTool, Layout, Image as ImageIcon, Type, 
@@ -5,7 +6,12 @@ import {
   Plus, Trash2, Save, Send, Eye, Calendar, 
   Search, Sparkles, Move, X, Check,
   Camera, Plane, Coffee, Smartphone, Globe,
-  FileText, Menu
+  FileText, Menu,
+  Bold, Italic, Underline, Link, 
+  AlignLeft, AlignCenter, AlignRight,
+  Video, Code, ListOrdered, Minus,
+  Clock, Hash, Tag, ChevronDown, ChevronUp,
+  AlertCircle, Palette
 } from 'lucide-react';
 
 export const Icons = {
@@ -14,5 +20,10 @@ export const Icons = {
   Plus, Trash2, Save, Send, Eye, Calendar, 
   Search, Sparkles, Move, X, Check,
   Camera, Plane, Coffee, Smartphone, Globe,
-  FileText, Menu
+  FileText, Menu,
+  Bold, Italic, Underline, Link, 
+  AlignLeft, AlignCenter, AlignRight,
+  Video, Code, ListOrdered, Minus,
+  Clock, Hash, Tag, ChevronDown, ChevronUp,
+  AlertCircle, Palette
 };
