@@ -378,10 +378,10 @@ const AboutView = ({ aboutImage, signatureImage }: { aboutImage: string, signatu
                         Welcome to my digital sanctuary. Ro-shines is born from a desire to slow down and document the beautiful details that often go unnoticed in our busy lives.
                     </p>
                     <p>
-                        I am an artist and storyteller based in the city, but my heart belongs to the mountains. When I'm not writing, you can find me painting in my sun-drenched studio (usually with butterflies nearby!), exploring hidden coffee shops, or curating sustainable fashion pieces.
+                        By day, I am a Developer crafting elegant AI Agents in the urban hum, but my heart yearns for the stillness of the mountains. This blog is the bridge between those two worlds. When I'm not coding, I am an artist of the intentional life: practicing mindfulness among the butterflies in my garden, exploring nature's quiet pockets, and celebrating sustainable fashion.
                     </p>
                     <p>
-                        This blog is a collection of my favorite things—from travel diaries to mindful living tips. I hope it brings a little bit of light into your day.
+                        Dive into these pages for travel diaries and conscious living tips, a curated collection viewed with intentionality and balance. May these stories illuminate your path.
                     </p>
                 </div>
                  <div className="mt-10">
