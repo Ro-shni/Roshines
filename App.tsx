@@ -18,8 +18,8 @@ const CATEGORY_CONFIG: Record<Category, { color: string, icon: any }> = {
 };
 
 const DEFAULT_HERO_IMAGE = 'https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&q=80&w=1920';
-const DEFAULT_ABOUT_IMAGE = 'https://images.unsplash.com/photo-1516575150278-77136aed6920?auto=format&fit=crop&q=80&w=800';
-const DEFAULT_SIGNATURE_IMAGE = 'https://upload.wikimedia.org/wikipedia/commons/e/e4/Signature_sample.svg';
+const DEFAULT_ABOUT_IMAGE = 'static\profile.jpeg';
+const DEFAULT_SIGNATURE_IMAGE = 'static\signature.png';
 
 const MOCK_POSTS: BlogPost[] = [
   {
