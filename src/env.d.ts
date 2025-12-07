@@ -2,6 +2,9 @@
 // Type declarations so TypeScript knows about import.meta.env VITE_* variables
 interface ImportMetaEnv {
   readonly VITE_ADMIN_PASSWORD?: string;
+  readonly VITE_EMAILJS_SERVICE_ID?: string;
+  readonly VITE_EMAILJS_TEMPLATE_ID: string;
+  readonly VITE_EMAILJS_PUBLIC_KEY: string;
   // add other VITE_ variables here as needed
 }
 

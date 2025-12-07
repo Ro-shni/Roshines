@@ -5,6 +5,7 @@ import { Icons } from './components/Icons';
 import { BlockEditor } from './components/BlockEditor';
 import { generateBlogContent, suggestTitle } from './services/geminiService';
 import * as db from './services/mockFirebase';
+import { send } from '@emailjs/browser';
 
 // --- Constants ---
 const CATEGORY_CONFIG: Record<Category, { color: string, icon: any }> = {
@@ -57,6 +58,27 @@ const MOCK_POSTS: BlogPost[] = [
 ];
 
 // --- Shared Components ---
+
+const NotificationToast = ({ message, onClose }: { message: string | null, onClose: () => void }) => {
+    useEffect(() => {
+        if(message) {
+            const t = setTimeout(onClose, 4000);
+            return () => clearTimeout(t);
+        }
+    }, [message, onClose]);
+
+    if (!message) return null;
+
+    return (
+        <div className="fixed bottom-6 right-6 z-[100] bg-stone-900 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-slide-up">
+            <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-stone-900">
+                <Icons.Check size={16} />
+            </div>
+            <p className="font-medium text-sm">{message}</p>
+            <button onClick={onClose} className="ml-2 text-stone-500 hover:text-white"><Icons.X size={14}/></button>
+        </div>
+    );
+};
 
 const Header: React.FC<{
     view: ViewState;
@@ -167,18 +189,57 @@ const Footer = ({ onOpenNewsletter }: { onOpenNewsletter: () => void }) => (
 const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, onClose: () => void, onSubscribe: (email: string) => void }) => {
     const [email, setEmail] = useState('');
     const [status, setStatus] = useState<'idle' | 'sending' | 'success'>('idle');
+    const form = useRef<HTMLFormElement>(null);
 
     if (!isOpen) return null;
     
-    const handleSubmit = (e: React.FormEvent) => {
+    // Helper to safely parse errors
+    const parseError = (error: any): string => {
+        if (typeof error === 'string') return error;
+        if (error?.text) return error.text;
+        if (error?.message) return error.message;
+        try {
+            return JSON.stringify(error);
+        } catch {
+            return 'Unknown error occurred';
+        }
+    };
+
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if(!email) return;
         setStatus('sending');
-        // Simulate API call
-        setTimeout(() => {
+        
+        try {
+            // 1. Save to local DB
+            await db.subscribeUser(email);
+
+            // 2. Send via EmailJS
+            const templateParams = {
+                email: email,
+                to_name: 'Subscriber',
+                from_name: 'Ro-shines',
+                message: 'Welcome to the Ro-shines community!'
+            };
+            
+            console.log('Sending email with params:', templateParams);
+
+            await send(
+                import.meta.env.VITE_EMAILJS_SERVICE_ID,
+                import.meta.env.VITE_EMAILJS_TEMPLATE_ID,
+                templateParams,
+                { publicKey: import.meta.env.VITE_EMAILJS_PUBLIC_KEY }
+            );
+            console.log('Email sent successfully via EmailJS');
+
             onSubscribe(email);
             setStatus('success');
-        }, 1500);
+        } catch (error: any) {
+            console.error('EmailJS Failed:', error);
+            const errorText = parseError(error);
+            alert(`Oops! Failed to send confirmation email.\nReason: ${errorText}`);
+            setStatus('idle');
+        }
     };
 
     return (
@@ -193,9 +254,6 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, on
                         </div>
                         <h3 className="text-2xl font-serif font-bold text-stone-900 mb-2">Welcome Aboard!</h3>
                         <p className="text-stone-500 mb-6">We've sent a warm welcome letter to <b>{email}</b>.</p>
-                        <a href={`mailto:?subject=Welcome to Ro-shines&body=Hello there!%0A%0AWelcome to the Ro-shines community. We're thrilled to have you here.%0A%0AWarmly,%0ARoshni`} target="_blank" className="inline-block w-full bg-stone-100 text-stone-900 font-bold py-3 rounded-xl hover:bg-stone-200 transition-colors">
-                            Open Test Email
-                        </a>
                      </div>
                 ) : (
                     <>
@@ -206,9 +264,10 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, on
                             <h3 className="text-2xl font-serif font-bold text-stone-900 mb-2">Join the Community</h3>
                             <p className="text-stone-500">Weekly stories, curated links, and design inspiration.</p>
                         </div>
-                        <form onSubmit={handleSubmit}>
+                        <form ref={form} onSubmit={handleSubmit}>
                             <input 
                                 type="email" 
+                                name="email" // Keep name for fallback, though we use params now
                                 placeholder="your@email.com" 
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
@@ -216,9 +275,10 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, on
                                 required
                                 disabled={status === 'sending'}
                             />
+                            
                             <button type="submit" disabled={status === 'sending'} className="w-full bg-stone-900 text-white font-bold py-3 rounded-xl hover:bg-stone-800 transition-transform active:scale-95 disabled:opacity-70 flex items-center justify-center gap-2">
                                 {status === 'sending' ? (
-                                    <>Connecting SMTP...</>
+                                    <>Processing...</>
                                 ) : 'Subscribe'}
                             </button>
                         </form>
@@ -295,13 +355,13 @@ const LoginView = ({ isRegister, onLogin, onSwitchMode }: { isRegister: boolean,
 const AboutView = ({ aboutImage, signatureImage }: { aboutImage: string, signatureImage: string }) => (
     <div className="max-w-5xl mx-auto px-6 py-16 animate-fade-in">
         <div className="flex flex-col md:flex-row gap-16 items-center mb-20">
-             {/* Arch Image with B&W Hover */}
+             {/* Arch Image with B&W by default, Color on Hover */}
             <div className="w-full md:w-1/2 relative group px-8 md:px-0">
                  <div className="aspect-[3/4] relative overflow-hidden rounded-t-full border-4 border-white shadow-2xl transition-all duration-500 z-10">
                     <img 
                         src={aboutImage} 
                         alt="Roshni" 
-                        className="w-full h-full object-cover transition-all duration-700 group-hover:grayscale group-hover:scale-110" 
+                        className="w-full h-full object-cover transition-all duration-700 grayscale group-hover:grayscale-0 group-hover:scale-110" 
                     />
                 </div>
                 {/* Decorative border offset */}
@@ -318,10 +378,10 @@ const AboutView = ({ aboutImage, signatureImage }: { aboutImage: string, signatu
                         Welcome to my digital sanctuary. Ro-shines is born from a desire to slow down and document the beautiful details that often go unnoticed in our busy lives.
                     </p>
                     <p>
-                        By day, I am a Developer crafting elegant AI Agents in the urban hum, but my heart yearns for the stillness of the mountains. This blog is the bridge between those two worlds. When I'm not coding, I am an artist of the intentional life: practicing mindfulness among the butterflies in my garden, exploring nature's quiet pockets, and celebrating sustainable fashion.
+                        I am an artist and storyteller based in the city, but my heart belongs to the mountains. When I'm not writing, you can find me painting in my sun-drenched studio (usually with butterflies nearby!), exploring hidden coffee shops, or curating sustainable fashion pieces.
                     </p>
                     <p>
-                        Dive into these pages for travel diaries and conscious living tips, a curated collection viewed with intentionality and balance. May these stories illuminate your path.
+                        This blog is a collection of my favorite things—from travel diaries to mindful living tips. I hope it brings a little bit of light into your day.
                     </p>
                 </div>
                  <div className="mt-10">
@@ -698,6 +758,21 @@ interface AdminDashboardProps {
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ posts, onEdit, onNew, onDelete, onToggleStatus, onOpenSettings }) => {
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'stories' | 'subscribers'>('stories');
+  const [subscribers, setSubscribers] = useState<string[]>([]);
+
+  useEffect(() => {
+      if (activeTab === 'subscribers') {
+          db.getSubscribers().then(setSubscribers);
+      }
+  }, [activeTab]);
+
+  const handleSendNewsletter = () => {
+      const bcc = subscribers.join(',');
+      const subject = encodeURIComponent("Latest Updates from Ro-shines");
+      const body = encodeURIComponent("Hello,\n\nI just published a new story on the blog! \n\nCheck it out here: " + window.location.origin + "\n\nWarmly,\nRoshni");
+      window.location.href = `mailto:?bcc=${bcc}&subject=${subject}&body=${body}`;
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-12 animate-fade-in">
@@ -722,56 +797,97 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ posts, onEdit, onNew, o
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-stone-50 border-b border-stone-100">
-            <tr>
-              <th className="text-left py-4 px-6 text-xs font-bold text-stone-500 uppercase tracking-wider">Title</th>
-              <th className="text-left py-4 px-6 text-xs font-bold text-stone-500 uppercase tracking-wider">Status</th>
-              <th className="text-left py-4 px-6 text-xs font-bold text-stone-500 uppercase tracking-wider">Views</th>
-              <th className="text-left py-4 px-6 text-xs font-bold text-stone-500 uppercase tracking-wider">Date</th>
-              <th className="text-right py-4 px-6 text-xs font-bold text-stone-500 uppercase tracking-wider">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-stone-50">
-            {posts.map((post) => (
-              <tr key={post.id} className="hover:bg-stone-50/50 transition-colors">
-                <td className="py-4 px-6">
-                  <div className="font-bold text-stone-900">{post.title}</div>
-                  <div className="text-xs text-stone-400 mt-1">{post.category}</div>
-                </td>
-                <td className="py-4 px-6">
-                  <div className="flex items-center gap-2">
-                      <span className={`inline-block w-2 h-2 rounded-full ${post.status === 'published' ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-                      <span className="text-sm font-medium text-stone-600 capitalize">{post.status}</span>
-                      <button 
-                        onClick={() => onToggleStatus(post.id)}
-                        className={`ml-2 text-xs font-bold px-2 py-1 rounded border transition-colors ${post.status === 'published' ? 'border-stone-200 text-stone-500 hover:bg-stone-100' : 'bg-stone-900 text-white border-transparent hover:bg-stone-800'}`}
-                      >
-                          {post.status === 'published' ? 'Unpublish' : 'Publish'}
-                      </button>
-                  </div>
-                </td>
-                <td className="py-4 px-6 text-sm text-stone-600">{post.views}</td>
-                <td className="py-4 px-6 text-sm text-stone-600">{new Date(post.publishedAt).toLocaleDateString()}</td>
-                <td className="py-4 px-6 text-right space-x-2">
-                  <button onClick={() => onEdit(post.id)} className="text-stone-400 hover:text-indigo-600 transition-colors p-2 hover:bg-indigo-50 rounded-lg">
-                    <Icons.PenTool size={18} />
-                  </button>
-                  <button onClick={() => setDeleteId(post.id)} className="text-stone-400 hover:text-red-600 transition-colors p-2 hover:bg-red-50 rounded-lg">
-                    <Icons.Trash2 size={18} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {posts.length === 0 && (
-            <div className="p-12 text-center text-stone-400">
-                <p>No stories yet. Start writing your first one!</p>
-            </div>
-        )}
+      <div className="flex gap-6 mb-8 border-b border-stone-100">
+          <button 
+            onClick={() => setActiveTab('stories')}
+            className={`pb-4 text-sm font-bold transition-colors border-b-2 ${activeTab === 'stories' ? 'text-stone-900 border-stone-900' : 'text-stone-400 border-transparent hover:text-stone-600'}`}
+          >
+              Stories
+          </button>
+          <button 
+            onClick={() => setActiveTab('subscribers')}
+            className={`pb-4 text-sm font-bold transition-colors border-b-2 ${activeTab === 'subscribers' ? 'text-stone-900 border-stone-900' : 'text-stone-400 border-transparent hover:text-stone-600'}`}
+          >
+              Subscribers
+          </button>
       </div>
+
+      {activeTab === 'stories' ? (
+        <div className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden">
+            <table className="w-full">
+            <thead className="bg-stone-50 border-b border-stone-100">
+                <tr>
+                <th className="text-left py-4 px-6 text-xs font-bold text-stone-500 uppercase tracking-wider">Title</th>
+                <th className="text-left py-4 px-6 text-xs font-bold text-stone-500 uppercase tracking-wider">Status</th>
+                <th className="text-left py-4 px-6 text-xs font-bold text-stone-500 uppercase tracking-wider">Views</th>
+                <th className="text-left py-4 px-6 text-xs font-bold text-stone-500 uppercase tracking-wider">Date</th>
+                <th className="text-right py-4 px-6 text-xs font-bold text-stone-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-50">
+                {posts.map((post) => (
+                <tr key={post.id} className="hover:bg-stone-50/50 transition-colors">
+                    <td className="py-4 px-6">
+                    <div className="font-bold text-stone-900">{post.title}</div>
+                    <div className="text-xs text-stone-400 mt-1">{post.category}</div>
+                    </td>
+                    <td className="py-4 px-6">
+                    <div className="flex items-center gap-2">
+                        <span className={`inline-block w-2 h-2 rounded-full ${post.status === 'published' ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                        <span className="text-sm font-medium text-stone-600 capitalize">{post.status}</span>
+                        <button 
+                            onClick={() => onToggleStatus(post.id)}
+                            className={`ml-2 text-xs font-bold px-2 py-1 rounded border transition-colors ${post.status === 'published' ? 'border-stone-200 text-stone-500 hover:bg-stone-100' : 'bg-stone-900 text-white border-transparent hover:bg-stone-800'}`}
+                        >
+                            {post.status === 'published' ? 'Unpublish' : 'Publish'}
+                        </button>
+                    </div>
+                    </td>
+                    <td className="py-4 px-6 text-sm text-stone-600">{post.views}</td>
+                    <td className="py-4 px-6 text-sm text-stone-600">{new Date(post.publishedAt).toLocaleDateString()}</td>
+                    <td className="py-4 px-6 text-right space-x-2">
+                    <button onClick={() => onEdit(post.id)} className="text-stone-400 hover:text-indigo-600 transition-colors p-2 hover:bg-indigo-50 rounded-lg">
+                        <Icons.PenTool size={18} />
+                    </button>
+                    <button onClick={() => setDeleteId(post.id)} className="text-stone-400 hover:text-red-600 transition-colors p-2 hover:bg-red-50 rounded-lg">
+                        <Icons.Trash2 size={18} />
+                    </button>
+                    </td>
+                </tr>
+                ))}
+            </tbody>
+            </table>
+            {posts.length === 0 && (
+                <div className="p-12 text-center text-stone-400">
+                    <p>No stories yet. Start writing your first one!</p>
+                </div>
+            )}
+        </div>
+      ) : (
+          <div className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden p-8">
+              <div className="flex justify-between items-center mb-8">
+                  <div>
+                      <h2 className="text-xl font-bold text-stone-900">Subscriber List ({subscribers.length})</h2>
+                      <p className="text-stone-500 text-sm mt-1">People who have joined your newsletter.</p>
+                  </div>
+                  <button onClick={handleSendNewsletter} disabled={subscribers.length === 0} className="bg-stone-900 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-stone-800 transition-colors flex items-center gap-2 disabled:opacity-50">
+                    <Icons.Send size={16} /> Send Update
+                  </button>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {subscribers.map((email, i) => (
+                      <div key={i} className="p-4 border border-stone-100 rounded-xl bg-stone-50 flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-stone-200 flex items-center justify-center text-stone-500 font-bold text-xs">
+                              {email.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="text-stone-600 font-medium text-sm">{email}</span>
+                      </div>
+                  ))}
+                  {subscribers.length === 0 && <div className="col-span-3 text-center text-stone-400 py-10">No subscribers yet.</div>}
+              </div>
+          </div>
+      )}
     </div>
   );
 };
@@ -992,6 +1108,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [newsletterOpen, setNewsletterOpen] = useState(false);
+  const [notification, setNotification] = useState<string | null>(null);
   const [siteSettings, setSiteSettings] = useState<SiteSettings>({
       siteName: 'Ro-shines',
       heroImage: DEFAULT_HERO_IMAGE,
@@ -1004,6 +1121,7 @@ const App: React.FC = () => {
 
   // Load initial data
   useEffect(() => {
+      // Initialize Data
       const storedPosts = localStorage.getItem('roshines_posts');
       if (storedPosts) {
           setPosts(JSON.parse(storedPosts));
@@ -1045,7 +1163,7 @@ const App: React.FC = () => {
       setView({ type: 'admin-dashboard' });
   };
 
-  const handlePostUpdate = (updatedPost: BlogPost) => {
+  const handlePostUpdate = async (updatedPost: BlogPost) => {
     const existing = posts.find(p => p.id === updatedPost.id);
     const isNewPublish = existing?.status !== 'published' && updatedPost.status === 'published';
 
@@ -1056,11 +1174,10 @@ const App: React.FC = () => {
     }
     setView({ type: 'admin-dashboard' });
 
-    // Simulate Newsletter on Publish
+    // Simulate Newsletter on Publish (Toast to Admin)
     if(isNewPublish) {
-        setNewsletterOpen(true); 
-        // In a real app, this would trigger backend email logic
-        setTimeout(() => alert(`Newsletter sent to subscribers about "${updatedPost.title}"!`), 500);
+        const subCount = await db.getSubscribersCount();
+        setNotification(`Newsletter sent to ${subCount} subscribers!`);
     }
   };
 
@@ -1068,12 +1185,18 @@ const App: React.FC = () => {
       setPosts(posts.filter(p => p.id !== id));
   };
   
-  const handleToggleStatus = (id: string) => {
+  const handleToggleStatus = async (id: string) => {
       const post = posts.find(p => p.id === id);
       if(post) {
           const newStatus: 'draft' | 'published' = post.status === 'published' ? 'draft' : 'published';
           const updated = { ...post, status: newStatus };
-          handlePostUpdate(updated); // Re-use update logic (triggers newsletter check)
+          
+          setPosts(posts.map(p => p.id === id ? updated : p));
+          
+          if (newStatus === 'published') {
+               const subCount = await db.getSubscribersCount();
+               setNotification(`Newsletter sent to ${subCount} subscribers!`);
+          }
       }
   }
 
@@ -1128,6 +1251,8 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-stone-50 text-stone-800 font-sans selection:bg-rose-100 selection:text-rose-900">
+      <NotificationToast message={notification} onClose={() => setNotification(null)} />
+
       {view.type !== 'admin-editor' && (
           <Header 
             view={view} 

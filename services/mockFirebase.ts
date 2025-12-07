@@ -20,7 +20,9 @@ const setStorage = (key: string, data: any) => {
   localStorage.setItem(`roshines_db_${key}`, JSON.stringify(data));
 };
 
-// ...existing code...
+
+// --- Auth Service ---
+
 export const loginUser = async (email: string, password: string): Promise<User> => {
   await new Promise(resolve => setTimeout(resolve, DELAY));
   
@@ -48,8 +50,6 @@ export const loginUser = async (email: string, password: string): Promise<User> 
   const { password: _, ...userInfo } = user; // strip password
   return { ...userInfo, isAdmin: false };
 };
-
-// ...existing code...
 
 export const registerUser = async (name: string, email: string, password: string): Promise<User> => {
   await new Promise(resolve => setTimeout(resolve, DELAY));
@@ -139,3 +139,24 @@ export const getLikeStatus = async (postId: string, userId?: string): Promise<{ 
   const liked = userId ? likes.some((l: any) => l.postId === postId && l.userId === userId) : false;
   return { liked, count };
 };
+
+// --- Firestore Service: Subscribers ---
+
+export const subscribeUser = async (email: string): Promise<void> => {
+    await new Promise(resolve => setTimeout(resolve, DELAY));
+    const subscribers = getStorage('subscribers'); // Array of strings
+    if (!subscribers.includes(email)) {
+        subscribers.push(email);
+        setStorage('subscribers', subscribers);
+    }
+}
+
+export const getSubscribersCount = async (): Promise<number> => {
+    const subscribers = getStorage('subscribers');
+    return subscribers.length;
+}
+
+export const getSubscribers = async (): Promise<string[]> => {
+    await new Promise(resolve => setTimeout(resolve, DELAY));
+    return getStorage('subscribers');
+}
