@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "predeploy": "npm run build",
-    "postbuild": "cp build/index.html build/404.html || true",
+    "postbuild": "copy build\\index.html build\\404.html > NUL 2>&1 || exit 0",
     "deploy": "gh-pages -d build"
   },
   "dependencies": {
@@ -24,6 +24,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
+    "cpy-cli": "^6.0.0",
     "gh-pages": "^6.3.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
