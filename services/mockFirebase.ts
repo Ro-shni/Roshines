@@ -1,162 +1,277 @@
-// ...existing code...
+// Firebase Firestore Service - Real database for persistent data
 import { User, Comment, BlogPost } from '../types';
-// dotenv removed — Vite exposes env via import.meta.env in the browser
+import { db } from './firebase';
+import { 
+  collection, 
+  doc, 
+  getDocs, 
+  getDoc,
+  addDoc, 
+  setDoc,
+  deleteDoc,
+  query, 
+  where, 
+  orderBy,
+  serverTimestamp,
+  Timestamp
+} from 'firebase/firestore';
 
-const DELAY = 600; // Simulate network latency
-
-const ADMIN_CREDS = {
-  email: 'roshni.nekkanti@gmail.com',
-  // Vite only exposes variables prefixed with VITE_ at runtime.
-  // Ensure you have VITE_ADMIN_PASSWORD in your .env file.
-  password: (import.meta.env.VITE_ADMIN_PASSWORD ?? '') as string,
-};
-
-const getStorage = (key: string) => {
-  const data = localStorage.getItem(`roshines_db_${key}`);
-  return data ? JSON.parse(data) : [];
-};
-
-const setStorage = (key: string, data: any) => {
-  localStorage.setItem(`roshines_db_${key}`, JSON.stringify(data));
-};
-
-
-// --- Auth Service ---
-
-export const loginUser = async (email: string, password: string): Promise<User> => {
-  await new Promise(resolve => setTimeout(resolve, DELAY));
-  
-  // 1. Check for Admin Hardcoded Credentials
-  if (email === ADMIN_CREDS.email) {
-    if (password === ADMIN_CREDS.password) {
-      return {
-        id: 'admin-roshni',
-        name: 'Roshni',
-        email: ADMIN_CREDS.email,
-        avatar: 'https://images.unsplash.com/photo-1516575150278-77136aed6920?auto=format&fit=crop&q=80&w=200',
-        isAdmin: true
-      };
-    } else {
-      throw new Error('Invalid password for admin account');
-    }
-  }
-
-  // 2. Check for Regular Users in Storage
-  const users = getStorage('users');
-  const user = users.find((u: any) => u.email === email && u.password === password);
-  
-  if (!user) throw new Error('Invalid email or password');
-  
-  const { password: _, ...userInfo } = user; // strip password
-  return { ...userInfo, isAdmin: false };
-};
-
-export const registerUser = async (name: string, email: string, password: string): Promise<User> => {
-  await new Promise(resolve => setTimeout(resolve, DELAY));
-
-  if (email === ADMIN_CREDS.email) {
-    throw new Error('This email is reserved for the administrator.');
-  }
-
-  const users = getStorage('users');
-  
-  if (users.find((u: any) => u.email === email)) {
-    throw new Error('User already exists');
-  }
-
-  const newUser = {
-    id: Math.random().toString(36).substr(2, 9),
-    name,
-    email,
-    password, // In real app, never store plain text passwords
-    avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&color=fff`,
-    isAdmin: false
-  };
-
-  users.push(newUser);
-  setStorage('users', users);
-
-  const { password: _, ...userInfo } = newUser;
-  return userInfo;
-};
-
-// --- Firestore Service: Comments ---
-
-export const getComments = async (postId: string): Promise<Comment[]> => {
-  await new Promise(resolve => setTimeout(resolve, DELAY)); // latency
-  const comments = getStorage('comments');
-  return comments
-    .filter((c: Comment) => c.postId === postId)
-    .sort((a: Comment, b: Comment) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-};
-
-export const addComment = async (postId: string, user: User, content: string): Promise<Comment> => {
-  await new Promise(resolve => setTimeout(resolve, DELAY));
-  const comments = getStorage('comments');
-  
-  const newComment: Comment = {
-    id: Math.random().toString(36).substr(2, 9),
-    postId,
-    userId: user.id,
-    userName: user.name,
-    userAvatar: user.avatar,
-    content,
-    createdAt: new Date().toISOString()
-  };
-
-  comments.push(newComment);
-  setStorage('comments', comments);
-  return newComment;
-};
-
-// --- Firestore Service: Likes ---
-
-export const toggleLike = async (postId: string, userId: string): Promise<{ liked: boolean, count: number }> => {
-  // Returns new state
-  const likes = getStorage('likes'); // Array of { postId, userId }
-  
-  const index = likes.findIndex((l: any) => l.postId === postId && l.userId === userId);
-  let liked = false;
-
-  if (index >= 0) {
-    likes.splice(index, 1); // Unlike
-    liked = false;
-  } else {
-    likes.push({ postId, userId }); // Like
-    liked = true;
-  }
-  
-  setStorage('likes', likes);
-  
-  // Recalculate count
-  const count = likes.filter((l: any) => l.postId === postId).length;
-  return { liked, count };
-};
-
-export const getLikeStatus = async (postId: string, userId?: string): Promise<{ liked: boolean, count: number }> => {
-  const likes = getStorage('likes');
-  const count = likes.filter((l: any) => l.postId === postId).length;
-  const liked = userId ? likes.some((l: any) => l.postId === postId && l.userId === userId) : false;
-  return { liked, count };
+// Collection names
+const COLLECTIONS = {
+  SUBSCRIBERS: 'subscribers',
+  COMMENTS: 'comments',
+  LIKES: 'likes',
+  POSTS: 'posts'
 };
 
 // --- Firestore Service: Subscribers ---
 
 export const subscribeUser = async (email: string): Promise<void> => {
-    await new Promise(resolve => setTimeout(resolve, DELAY));
-    const subscribers = getStorage('subscribers'); // Array of strings
-    if (!subscribers.includes(email)) {
-        subscribers.push(email);
-        setStorage('subscribers', subscribers);
+  try {
+    // Check if already subscribed
+    const subscribersRef = collection(db, COLLECTIONS.SUBSCRIBERS);
+    const q = query(subscribersRef, where('email', '==', email));
+    const querySnapshot = await getDocs(q);
+    
+    if (querySnapshot.empty) {
+      // Add new subscriber
+      await addDoc(subscribersRef, {
+        email,
+        subscribedAt: serverTimestamp()
+      });
     }
-}
+  } catch (error) {
+    console.error('Error subscribing user:', error);
+    throw error;
+  }
+};
 
 export const getSubscribersCount = async (): Promise<number> => {
-    const subscribers = getStorage('subscribers');
-    return subscribers.length;
-}
+  try {
+    const subscribersRef = collection(db, COLLECTIONS.SUBSCRIBERS);
+    const querySnapshot = await getDocs(subscribersRef);
+    return querySnapshot.size;
+  } catch (error) {
+    console.error('Error getting subscribers count:', error);
+    return 0;
+  }
+};
 
 export const getSubscribers = async (): Promise<string[]> => {
-    await new Promise(resolve => setTimeout(resolve, DELAY));
-    return getStorage('subscribers');
-}
+  try {
+    const subscribersRef = collection(db, COLLECTIONS.SUBSCRIBERS);
+    const querySnapshot = await getDocs(subscribersRef);
+    return querySnapshot.docs.map(doc => doc.data().email);
+  } catch (error) {
+    console.error('Error getting subscribers:', error);
+    return [];
+  }
+};
+
+// --- Firestore Service: Comments ---
+
+export const getComments = async (postId: string): Promise<Comment[]> => {
+  try {
+    const commentsRef = collection(db, COLLECTIONS.COMMENTS);
+    const q = query(
+      commentsRef, 
+      where('postId', '==', postId),
+      orderBy('createdAt', 'desc')
+    );
+    const querySnapshot = await getDocs(q);
+    
+    return querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        postId: data.postId,
+        userId: data.userId,
+        userName: data.userName,
+        userAvatar: data.userAvatar,
+        content: data.content,
+        createdAt: data.createdAt instanceof Timestamp 
+          ? data.createdAt.toDate().toISOString() 
+          : data.createdAt
+      };
+    });
+  } catch (error) {
+    console.error('Error getting comments:', error);
+    return [];
+  }
+};
+
+export const addComment = async (postId: string, user: User, content: string): Promise<Comment> => {
+  try {
+    const commentsRef = collection(db, COLLECTIONS.COMMENTS);
+    const commentData = {
+      postId,
+      userId: user.id,
+      userName: user.name,
+      userAvatar: user.avatar || null,
+      content,
+      createdAt: serverTimestamp()
+    };
+    
+    const docRef = await addDoc(commentsRef, commentData);
+    
+    return {
+      id: docRef.id,
+      postId,
+      userId: user.id,
+      userName: user.name,
+      userAvatar: user.avatar,
+      content,
+      createdAt: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Error adding comment:', error);
+    throw error;
+  }
+};
+
+// --- Firestore Service: Likes ---
+
+export const toggleLike = async (postId: string, userId: string): Promise<{ liked: boolean, count: number }> => {
+  try {
+    const likeId = `${postId}_${userId}`;
+    const likeRef = doc(db, COLLECTIONS.LIKES, likeId);
+    const likeDoc = await getDoc(likeRef);
+    
+    let liked = false;
+    
+    if (likeDoc.exists()) {
+      // Unlike - remove the document
+      await deleteDoc(likeRef);
+      liked = false;
+    } else {
+      // Like - add the document
+      await setDoc(likeRef, {
+        postId,
+        userId,
+        likedAt: serverTimestamp()
+      });
+      liked = true;
+    }
+    
+    // Get updated count
+    const count = await getLikeCount(postId);
+    
+    return { liked, count };
+  } catch (error) {
+    console.error('Error toggling like:', error);
+    throw error;
+  }
+};
+
+const getLikeCount = async (postId: string): Promise<number> => {
+  try {
+    const likesRef = collection(db, COLLECTIONS.LIKES);
+    const q = query(likesRef, where('postId', '==', postId));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.size;
+  } catch (error) {
+    console.error('Error getting like count:', error);
+    return 0;
+  }
+};
+
+export const getLikeStatus = async (postId: string, userId?: string): Promise<{ liked: boolean, count: number }> => {
+  try {
+    const count = await getLikeCount(postId);
+    
+    if (!userId) {
+      return { liked: false, count };
+    }
+    
+    const likeId = `${postId}_${userId}`;
+    const likeRef = doc(db, COLLECTIONS.LIKES, likeId);
+    const likeDoc = await getDoc(likeRef);
+    
+    return { liked: likeDoc.exists(), count };
+  } catch (error) {
+    console.error('Error getting like status:', error);
+    return { liked: false, count: 0 };
+  }
+};
+
+// --- Firestore Service: Posts (Optional - for persistent blog posts) ---
+
+export const savePosts = async (posts: BlogPost[]): Promise<void> => {
+  try {
+    for (const post of posts) {
+      const postRef = doc(db, COLLECTIONS.POSTS, post.id);
+      await setDoc(postRef, {
+        ...post,
+        updatedAt: serverTimestamp()
+      });
+    }
+  } catch (error) {
+    console.error('Error saving posts:', error);
+    throw error;
+  }
+};
+
+export const getPosts = async (): Promise<BlogPost[] | null> => {
+  try {
+    const postsRef = collection(db, COLLECTIONS.POSTS);
+    const querySnapshot = await getDocs(postsRef);
+    
+    if (querySnapshot.empty) {
+      return null; // Return null to indicate no posts in Firestore, use local defaults
+    }
+    
+    return querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        title: data.title,
+        excerpt: data.excerpt,
+        coverImage: data.coverImage,
+        category: data.category,
+        tags: data.tags || [],
+        blocks: data.blocks || [],
+        author: data.author,
+        publishedAt: data.publishedAt,
+        scheduledAt: data.scheduledAt,
+        status: data.status,
+        views: data.views || 0,
+        likesCount: data.likesCount || 0
+      } as BlogPost;
+    });
+  } catch (error) {
+    console.error('Error getting posts:', error);
+    return null;
+  }
+};
+
+export const savePost = async (post: BlogPost): Promise<void> => {
+  try {
+    const postRef = doc(db, COLLECTIONS.POSTS, post.id);
+    await setDoc(postRef, {
+      ...post,
+      updatedAt: serverTimestamp()
+    });
+  } catch (error) {
+    console.error('Error saving post:', error);
+    throw error;
+  }
+};
+
+export const deletePost = async (postId: string): Promise<void> => {
+  try {
+    const postRef = doc(db, COLLECTIONS.POSTS, postId);
+    await deleteDoc(postRef);
+  } catch (error) {
+    console.error('Error deleting post:', error);
+    throw error;
+  }
+};
+
+// Legacy functions (kept for compatibility but no longer used)
+export const loginUser = async (_email: string, _password: string): Promise<User> => {
+  throw new Error('Use Google OAuth for authentication');
+};
+
+export const registerUser = async (_name: string, _email: string, _password: string): Promise<User> => {
+  throw new Error('Use Google OAuth for authentication');
+};

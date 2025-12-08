@@ -17,10 +17,11 @@ const CATEGORY_CONFIG: Record<Category, { color: string, icon: any }> = {
   [Category.Journal]: { color: 'bg-stone-200 text-stone-800', icon: Icons.FileText },
 };
 
-// Updated image paths as requested (normalized to forward slashes for web compatibility)
+
+// Updated image paths - using public folder with base URL for GitHub Pages compatibility
 const DEFAULT_HERO_IMAGE = 'https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&q=80&w=1920';
-const DEFAULT_ABOUT_IMAGE = import.meta.env.BASE_URL+'profile.jpeg';
-const DEFAULT_SIGNATURE_IMAGE = import.meta.env.BASE_URL+'signature.png';
+const DEFAULT_ABOUT_IMAGE = import.meta.env.BASE_URL + 'profile.jpeg';
+const DEFAULT_SIGNATURE_IMAGE = import.meta.env.BASE_URL + 'signature.png';
 
 const MOCK_POSTS: BlogPost[] = [
   {
@@ -1207,14 +1208,39 @@ const App: React.FC = () => {
 
   // Load initial data and User Session
   useEffect(() => {
-      // Initialize Data
-      const storedPosts = localStorage.getItem('roshines_posts');
-      if (storedPosts) {
-          setPosts(JSON.parse(storedPosts));
-      } else {
-          setPosts(MOCK_POSTS);
-          localStorage.setItem('roshines_posts', JSON.stringify(MOCK_POSTS));
-      }
+      const loadData = async () => {
+          // Try to load posts from Firestore first
+          try {
+              const firestorePosts = await db.getPosts();
+              if (firestorePosts && firestorePosts.length > 0) {
+                  setPosts(firestorePosts);
+                  localStorage.setItem('roshines_posts', JSON.stringify(firestorePosts));
+              } else {
+                  // Fall back to localStorage or mock posts
+                  const storedPosts = localStorage.getItem('roshines_posts');
+                  if (storedPosts) {
+                      setPosts(JSON.parse(storedPosts));
+                  } else {
+                      setPosts(MOCK_POSTS);
+                      localStorage.setItem('roshines_posts', JSON.stringify(MOCK_POSTS));
+                      // Save mock posts to Firestore for future use
+                      await db.savePosts(MOCK_POSTS);
+                  }
+              }
+          } catch (error) {
+              console.error('Error loading posts from Firestore:', error);
+              // Fall back to localStorage or mock posts
+              const storedPosts = localStorage.getItem('roshines_posts');
+              if (storedPosts) {
+                  setPosts(JSON.parse(storedPosts));
+              } else {
+                  setPosts(MOCK_POSTS);
+                  localStorage.setItem('roshines_posts', JSON.stringify(MOCK_POSTS));
+              }
+          }
+      };
+      
+      loadData();
 
       const storedSettings = localStorage.getItem('roshines_settings');
       if(storedSettings) setSiteSettings(JSON.parse(storedSettings));
@@ -1231,9 +1257,12 @@ const App: React.FC = () => {
       }
   }, []);
 
-  // Save posts whenever they change
+  // Save posts whenever they change - both to localStorage and Firestore
   useEffect(() => {
-      if(posts.length > 0) localStorage.setItem('roshines_posts', JSON.stringify(posts));
+      if(posts.length > 0) {
+          localStorage.setItem('roshines_posts', JSON.stringify(posts));
+          // Note: Individual post saves are handled in handlePostUpdate and handlePostDelete
+      }
   }, [posts]);
   
   // View counting logic
@@ -1281,17 +1310,32 @@ const App: React.FC = () => {
     } else {
       setPosts([updatedPost, ...posts]);
     }
+    
+    // Save to Firestore
+    try {
+      await db.savePost(updatedPost);
+    } catch (error) {
+      console.error('Error saving post to Firestore:', error);
+    }
+    
     setView({ type: 'admin-dashboard' });
 
-    // Simulate Newsletter on Publish (Toast to Admin)
+    // Notify on Publish
     if(isNewPublish) {
         const subCount = await db.getSubscribersCount();
         setNotification(`Newsletter sent to ${subCount} subscribers!`);
     }
   };
 
-  const handlePostDelete = (id: string) => {
+  const handlePostDelete = async (id: string) => {
       setPosts(posts.filter(p => p.id !== id));
+      
+      // Delete from Firestore
+      try {
+        await db.deletePost(id);
+      } catch (error) {
+        console.error('Error deleting post from Firestore:', error);
+      }
   };
   
   const handleToggleStatus = async (id: string) => {
@@ -1301,6 +1345,13 @@ const App: React.FC = () => {
           const updated = { ...post, status: newStatus };
           
           setPosts(posts.map(p => p.id === id ? updated : p));
+          
+          // Save to Firestore
+          try {
+            await db.savePost(updated);
+          } catch (error) {
+            console.error('Error updating post status in Firestore:', error);
+          }
           
           if (newStatus === 'published') {
                const subCount = await db.getSubscribersCount();
