@@ -19,8 +19,8 @@ const CATEGORY_CONFIG: Record<Category, { color: string, icon: any }> = {
 
 // Updated image paths as requested (normalized to forward slashes for web compatibility)
 const DEFAULT_HERO_IMAGE = 'https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&q=80&w=1920';
-const DEFAULT_ABOUT_IMAGE = 'static/profile.jpeg';
-const DEFAULT_SIGNATURE_IMAGE = 'static/signature.png';
+const DEFAULT_ABOUT_IMAGE = import.meta.env.BASE_URL+'profile.jpeg';
+const DEFAULT_SIGNATURE_IMAGE = import.meta.env.BASE_URL+'signature.png';
 
 const MOCK_POSTS: BlogPost[] = [
   {
