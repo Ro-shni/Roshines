@@ -17,9 +17,10 @@ const CATEGORY_CONFIG: Record<Category, { color: string, icon: any }> = {
   [Category.Journal]: { color: 'bg-stone-200 text-stone-800', icon: Icons.FileText },
 };
 
+// Updated image paths as requested (normalized to forward slashes for web compatibility)
 const DEFAULT_HERO_IMAGE = 'https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&q=80&w=1920';
-const DEFAULT_ABOUT_IMAGE = 'static\profile.jpeg';
-const DEFAULT_SIGNATURE_IMAGE = 'static\signature.png';
+const DEFAULT_ABOUT_IMAGE = 'static/profile.jpeg';
+const DEFAULT_SIGNATURE_IMAGE = 'static/signature.png';
 
 const MOCK_POSTS: BlogPost[] = [
   {
@@ -58,6 +59,17 @@ const MOCK_POSTS: BlogPost[] = [
 ];
 
 // --- Shared Components ---
+
+const GoogleIcon = () => (
+    <svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
+        <g transform="matrix(1, 0, 0, 1, 27.009001, -39.238998)">
+            <path fill="#4285F4" d="M -3.264 51.509 C -3.264 50.719 -3.334 49.969 -3.454 49.239 L -14.754 49.239 L -14.754 53.749 L -8.284 53.749 C -8.574 55.229 -9.424 56.479 -10.684 57.329 L -10.684 60.329 L -6.824 60.329 C -4.564 58.239 -3.264 55.159 -3.264 51.509 Z" />
+            <path fill="#34A853" d="M -14.754 63.239 C -11.514 63.239 -8.804 62.159 -6.824 60.329 L -10.684 57.329 C -11.764 58.049 -13.134 58.489 -14.754 58.489 C -17.884 58.489 -20.534 56.379 -21.484 53.529 L -25.464 53.529 L -25.464 56.619 C -23.494 60.539 -19.444 63.239 -14.754 63.239 Z" />
+            <path fill="#FBBC05" d="M -21.484 53.529 C -21.734 52.809 -21.864 52.039 -21.864 51.239 C -21.864 50.439 -21.734 49.669 -21.484 48.949 L -21.484 45.859 L -25.464 45.859 C -26.284 47.479 -26.754 49.299 -26.754 51.239 C -26.754 53.179 -26.284 54.999 -25.464 56.619 L -21.484 53.529 Z" />
+            <path fill="#EA4335" d="M -14.754 43.989 C -12.984 43.989 -11.404 44.599 -10.154 45.789 L -6.734 42.369 C -8.804 40.429 -11.514 39.239 -14.754 39.239 C -19.444 39.239 -23.494 41.939 -25.464 45.859 L -21.484 48.949 C -20.534 46.099 -17.884 43.989 -14.754 43.989 Z" />
+        </g>
+    </svg>
+);
 
 const NotificationToast = ({ message, onClose }: { message: string | null, onClose: () => void }) => {
     useEffect(() => {
@@ -158,7 +170,7 @@ const Header: React.FC<{
     );
 };
 
-const Footer = ({ onOpenNewsletter }: { onOpenNewsletter: () => void }) => (
+const Footer = ({ onOpenNewsletter, onNavigate }: { onOpenNewsletter: () => void, onNavigate: (view: ViewState) => void }) => (
     <footer className="bg-stone-900 text-stone-400 py-16">
         <div className="max-w-7xl mx-auto px-6 grid md:grid-cols-4 gap-12">
             <div className="col-span-1 md:col-span-2">
@@ -172,9 +184,8 @@ const Footer = ({ onOpenNewsletter }: { onOpenNewsletter: () => void }) => (
             <div>
                 <h4 className="text-white font-bold mb-6 uppercase tracking-wider text-xs">Explore</h4>
                 <ul className="space-y-4 text-sm">
-                    <li className="hover:text-white cursor-pointer transition-colors">Design</li>
-                    <li className="hover:text-white cursor-pointer transition-colors">Culture</li>
-                    <li className="hover:text-white cursor-pointer transition-colors">About</li>
+                    <li><button onClick={() => onNavigate({ type: 'home' })} className="hover:text-white cursor-pointer transition-colors text-left">Home</button></li>
+                    <li><button onClick={() => onNavigate({ type: 'about' })} className="hover:text-white cursor-pointer transition-colors text-left">About</button></li>
                 </ul>
             </div>
             <div>
@@ -193,7 +204,6 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, on
 
     if (!isOpen) return null;
     
-    // Helper to safely parse errors
     const parseError = (error: any): string => {
         if (typeof error === 'string') return error;
         if (error?.text) return error.text;
@@ -211,10 +221,8 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, on
         setStatus('sending');
         
         try {
-            // 1. Save to local DB
             await db.subscribeUser(email);
 
-            // 2. Send via EmailJS
             const templateParams = {
                 email: email,
                 to_name: 'Subscriber',
@@ -222,8 +230,6 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, on
                 message: 'Welcome to the Ro-shines community!'
             };
             
-            console.log('Sending email with params:', templateParams);
-
             await send(
                 import.meta.env.VITE_EMAILJS_SERVICE_ID,
                 import.meta.env.VITE_EMAILJS_TEMPLATE_ID,
@@ -267,7 +273,7 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, on
                         <form ref={form} onSubmit={handleSubmit}>
                             <input 
                                 type="email" 
-                                name="email" // Keep name for fallback, though we use params now
+                                name="email"
                                 placeholder="your@email.com" 
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
@@ -289,64 +295,147 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, on
     );
 };
 
-const LoginView = ({ isRegister, onLogin, onSwitchMode }: { isRegister: boolean, onLogin: (u: User) => void, onSwitchMode: () => void }) => {
-    const [name, setName] = useState('');
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState('');
-    const [loading, setLoading] = useState(false);
+// Admin email constant - only this email gets admin access
+const ADMIN_EMAIL = 'roshni.nekkanti@gmail.com';
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError('');
+// Helper function to decode JWT token from Google
+const decodeJwtPayload = (token: string): any => {
+    try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+            atob(base64)
+                .split('')
+                .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                .join('')
+        );
+        return JSON.parse(jsonPayload);
+    } catch (e) {
+        console.error('Failed to decode JWT:', e);
+        return null;
+    }
+};
+
+const LoginView = ({ onLogin }: { onLogin: (u: User) => void }) => {
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const googleButtonRef = useRef<HTMLDivElement>(null);
+
+    // Handle the Google Sign-In credential response
+    const handleCredentialResponse = (response: any) => {
         setLoading(true);
+        setError(null);
+        
         try {
-            const user = isRegister 
-                ? await db.registerUser(name, email, password)
-                : await db.loginUser(email, password);
+            const payload = decodeJwtPayload(response.credential);
+            
+            if (!payload || !payload.email) {
+                setError('Failed to get account information from Google');
+                setLoading(false);
+                return;
+            }
+            
+            const userEmail = payload.email;
+            const userName = payload.name || payload.email.split('@')[0];
+            const userPicture = payload.picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=random`;
+            
+            // Determine if user is admin based on email
+            const isAdmin = userEmail === ADMIN_EMAIL;
+            
+            const user: User = {
+                id: 'google-' + payload.sub,
+                name: userName,
+                email: userEmail,
+                avatar: userPicture,
+                isAdmin: isAdmin
+            };
+            
             onLogin(user);
-        } catch (err: any) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
+        } catch (e) {
+            console.error('Google Sign-In error:', e);
+            setError('Sign-in failed. Please try again.');
         }
+        setLoading(false);
     };
 
+    // Initialize Google Sign-In when component mounts
+    useEffect(() => {
+        // Check if google is available
+        const initializeGoogleSignIn = () => {
+            if (typeof window !== 'undefined' && (window as any).google) {
+                (window as any).google.accounts.id.initialize({
+                    client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
+                    callback: handleCredentialResponse,
+                    auto_select: false,
+                    cancel_on_tap_outside: true,
+                });
+                
+                if (googleButtonRef.current) {
+                    (window as any).google.accounts.id.renderButton(
+                        googleButtonRef.current,
+                        { 
+                            type: 'standard',
+                            theme: 'filled_black',
+                            size: 'large',
+                            text: 'signin_with',
+                            shape: 'pill',
+                            width: 300
+                        }
+                    );
+                }
+            }
+        };
+
+        // Wait for google script to load
+        if ((window as any).google) {
+            initializeGoogleSignIn();
+        } else {
+            const checkGoogle = setInterval(() => {
+                if ((window as any).google) {
+                    clearInterval(checkGoogle);
+                    initializeGoogleSignIn();
+                }
+            }, 100);
+            
+            // Cleanup interval after 10 seconds if Google still hasn't loaded
+            setTimeout(() => clearInterval(checkGoogle), 10000);
+        }
+    }, []);
+
     return (
-        <div className="min-h-[80vh] flex items-center justify-center p-4">
-            <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-xl border border-stone-100">
-                <div className="text-center mb-8">
-                    <h2 className="text-3xl font-serif font-bold text-stone-900 mb-2">{isRegister ? 'Create Account' : 'Welcome Back'}</h2>
-                    <p className="text-stone-500">{isRegister ? 'Join our community of storytellers.' : 'Sign in to access your dashboard.'}</p>
+        <div className="min-h-[80vh] flex items-center justify-center p-4 relative overflow-hidden">
+            {/* Background Accent */}
+            <div className="absolute inset-0 z-0">
+                <img src={DEFAULT_HERO_IMAGE} className="w-full h-full object-cover opacity-10 blur-sm" alt="" />
+            </div>
+            
+            <div className="relative z-10 max-w-sm w-full bg-white/90 backdrop-blur p-8 rounded-3xl shadow-2xl border border-white/50 text-center">
+                <div className="mb-8">
+                    <h2 className="text-3xl font-serif font-bold text-stone-900 mb-2">Welcome</h2>
+                    <p className="text-stone-500">Sign in with your Google account to continue.</p>
                 </div>
 
-                {error && <div className="mb-6 p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2"><Icons.AlertCircle size={16}/> {error}</div>}
-
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    {isRegister && (
-                         <div>
-                            <label className="block text-xs font-bold text-stone-500 uppercase mb-1">Name</label>
-                            <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full p-3 bg-stone-50 rounded-lg border border-stone-200 outline-none focus:border-stone-800" required />
-                        </div>
-                    )}
-                    <div>
-                        <label className="block text-xs font-bold text-stone-500 uppercase mb-1">Email</label>
-                        <input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 bg-stone-50 rounded-lg border border-stone-200 outline-none focus:border-stone-800" required />
+                {error && (
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                        {error}
                     </div>
-                    <div>
-                        <label className="block text-xs font-bold text-stone-500 uppercase mb-1">Password</label>
-                        <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 bg-stone-50 rounded-lg border border-stone-200 outline-none focus:border-stone-800" required />
-                    </div>
-                    
-                    <button type="submit" disabled={loading} className="w-full bg-stone-900 text-white font-bold py-3.5 rounded-xl hover:bg-stone-800 transition-all mt-4 disabled:opacity-70">
-                        {loading ? 'Processing...' : (isRegister ? 'Sign Up' : 'Sign In')}
-                    </button>
-                </form>
+                )}
 
-                <div className="mt-6 text-center text-sm text-stone-500">
-                    {isRegister ? "Already have an account?" : "Don't have an account?"} {' '}
-                    <button onClick={onSwitchMode} className="text-stone-900 font-bold hover:underline">{isRegister ? 'Login' : 'Sign up'}</button>
-                </div>
+                {loading ? (
+                    <div className="flex items-center justify-center py-4">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-900"></div>
+                        <span className="ml-3 text-stone-600">Signing in...</span>
+                    </div>
+                ) : (
+                    <div className="flex justify-center">
+                        {/* Google Sign-In Button rendered here */}
+                        <div ref={googleButtonRef}></div>
+                    </div>
+                )}
+                
+                <p className="mt-8 text-xs text-stone-400">
+                    By continuing, you agree to our Terms of Service and Privacy Policy.
+                </p>
             </div>
         </div>
     );
@@ -495,6 +584,7 @@ const AdminSettings = ({ settings, onSave, onCancel }: { settings: SiteSettings,
     );
 };
 
+// ... LikeButton, CommentSection, PostDetailView, HomeView, DeleteConfirmationModal, AdminDashboard, Editor components remain same ...
 const LikeButton = ({ postId, initialCount, initialLiked, userId }: { postId: string, initialCount: number, initialLiked: boolean, userId?: string }) => {
     const [liked, setLiked] = useState(initialLiked);
     const [count, setCount] = useState(initialCount);
@@ -745,8 +835,6 @@ const DeleteConfirmationModal = ({ isOpen, onClose, onConfirm }: { isOpen: boole
     );
 };
 
-// --- Admin Components ---
-
 interface AdminDashboardProps {
   posts: BlogPost[];
   onEdit: (id: string) => void;
@@ -891,8 +979,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ posts, onEdit, onNew, o
     </div>
   );
 };
-
-// --- Editor Component ---
 
 const Editor: React.FC<{ 
     post: BlogPost; 
@@ -1119,7 +1205,7 @@ const App: React.FC = () => {
   // Track Views - Ref to prevent double counting in strict mode
   const lastViewedIdRef = useRef<string | null>(null);
 
-  // Load initial data
+  // Load initial data and User Session
   useEffect(() => {
       // Initialize Data
       const storedPosts = localStorage.getItem('roshines_posts');
@@ -1132,6 +1218,17 @@ const App: React.FC = () => {
 
       const storedSettings = localStorage.getItem('roshines_settings');
       if(storedSettings) setSiteSettings(JSON.parse(storedSettings));
+
+      // Restore User Session
+      const storedUser = localStorage.getItem('roshines_user');
+      if (storedUser) {
+          try {
+            setUser(JSON.parse(storedUser));
+          } catch(e) {
+            console.error("Failed to restore user session");
+            localStorage.removeItem('roshines_user');
+          }
+      }
   }, []);
 
   // Save posts whenever they change
@@ -1155,6 +1252,18 @@ const App: React.FC = () => {
         lastViewedIdRef.current = null;
     }
   }, [view]);
+
+  const handleLoginSuccess = (u: User) => {
+      setUser(u);
+      localStorage.setItem('roshines_user', JSON.stringify(u));
+      setView({ type: 'home' });
+  };
+
+  const handleLogout = () => {
+      setUser(null);
+      localStorage.removeItem('roshines_user');
+      setView({ type: 'home' });
+  };
 
   // Save settings
   const handleSaveSettings = (newSettings: SiteSettings) => {
@@ -1210,9 +1319,8 @@ const App: React.FC = () => {
       case 'about':
         return <AboutView aboutImage={siteSettings.aboutImage} signatureImage={siteSettings.signatureImage} />;
       case 'login':
-        return <LoginView isRegister={false} onLogin={(u) => { setUser(u); setView({ type: 'home' }); }} onSwitchMode={() => setView({ type: 'register' })} />;
       case 'register':
-        return <LoginView isRegister={true} onLogin={(u) => { setUser(u); setView({ type: 'home' }); }} onSwitchMode={() => setView({ type: 'login' })} />;
+        return <LoginView onLogin={handleLoginSuccess} />;
       case 'admin-dashboard':
         if (!user?.isAdmin) return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} heroImage={siteSettings.heroImage} />;
         return (
@@ -1261,13 +1369,13 @@ const App: React.FC = () => {
             setSearchQuery={setSearchQuery} 
             onOpenNewsletter={() => setNewsletterOpen(true)}
             user={user}
-            onLogout={() => { setUser(null); setView({ type: 'home' }); }}
+            onLogout={handleLogout}
           />
       )}
       
       {renderContent()}
 
-      {view.type !== 'admin-editor' && <Footer onOpenNewsletter={() => setNewsletterOpen(true)} />}
+      {view.type !== 'admin-editor' && <Footer onOpenNewsletter={() => setNewsletterOpen(true)} onNavigate={setView} />}
 
       <NewsletterModal isOpen={newsletterOpen} onClose={() => setNewsletterOpen(false)} onSubscribe={(email) => console.log('Subscribed:', email)} />
     </div>
