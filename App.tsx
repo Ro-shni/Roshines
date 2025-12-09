@@ -321,48 +321,56 @@ const LoginView = ({ onLogin }: { onLogin: (u: User) => void }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const googleButtonRef = useRef<HTMLDivElement>(null);
-
-    // Handle the Google Sign-In credential response
-    const handleCredentialResponse = (response: any) => {
-        setLoading(true);
-        setError(null);
-        
-        try {
-            const payload = decodeJwtPayload(response.credential);
-            
-            if (!payload || !payload.email) {
-                setError('Failed to get account information from Google');
-                setLoading(false);
-                return;
-            }
-            
-            const userEmail = payload.email;
-            const userName = payload.name || payload.email.split('@')[0];
-            const userPicture = payload.picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=random`;
-            
-            // Determine if user is admin based on email
-            const isAdmin = userEmail === ADMIN_EMAIL;
-            
-            const user: User = {
-                id: 'google-' + payload.sub,
-                name: userName,
-                email: userEmail,
-                avatar: userPicture,
-                isAdmin: isAdmin
-            };
-            
-            onLogin(user);
-        } catch (e) {
-            console.error('Google Sign-In error:', e);
-            setError('Sign-in failed. Please try again.');
-        }
-        setLoading(false);
-    };
+    
+    // Store onLogin in a ref to avoid stale closure issues
+    const onLoginRef = useRef(onLogin);
+    useEffect(() => {
+        onLoginRef.current = onLogin;
+    }, [onLogin]);
 
     // Initialize Google Sign-In when component mounts
     useEffect(() => {
+        let checkGoogleInterval: ReturnType<typeof setInterval> | null = null;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        let isMounted = true;
+        
+        // Handle the Google Sign-In credential response
+        const handleCredentialResponse = (response: any) => {
+            if (!isMounted) return;
+            
+            try {
+                const payload = decodeJwtPayload(response.credential);
+                
+                if (!payload || !payload.email) {
+                    return;
+                }
+                
+                const userEmail = payload.email;
+                const userName = payload.name || payload.email.split('@')[0];
+                const userPicture = payload.picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=random`;
+                
+                // Determine if user is admin based on email
+                const isAdmin = userEmail === ADMIN_EMAIL;
+                
+                const user: User = {
+                    id: 'google-' + payload.sub,
+                    name: userName,
+                    email: userEmail,
+                    avatar: userPicture,
+                    isAdmin: isAdmin
+                };
+                
+                // Use ref to always get the latest onLogin function
+                onLoginRef.current(user);
+            } catch (e) {
+                console.error('Google Sign-In error:', e);
+            }
+        };
+        
         // Check if google is available
         const initializeGoogleSignIn = () => {
+            if (!isMounted) return;
+            
             if (typeof window !== 'undefined' && (window as any).google) {
                 (window as any).google.accounts.id.initialize({
                     client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
@@ -391,16 +399,29 @@ const LoginView = ({ onLogin }: { onLogin: (u: User) => void }) => {
         if ((window as any).google) {
             initializeGoogleSignIn();
         } else {
-            const checkGoogle = setInterval(() => {
+            checkGoogleInterval = setInterval(() => {
                 if ((window as any).google) {
-                    clearInterval(checkGoogle);
+                    if (checkGoogleInterval) clearInterval(checkGoogleInterval);
+                    checkGoogleInterval = null;
                     initializeGoogleSignIn();
                 }
             }, 100);
             
             // Cleanup interval after 10 seconds if Google still hasn't loaded
-            setTimeout(() => clearInterval(checkGoogle), 10000);
+            timeoutId = setTimeout(() => {
+                if (checkGoogleInterval) {
+                    clearInterval(checkGoogleInterval);
+                    checkGoogleInterval = null;
+                }
+            }, 10000);
         }
+        
+        // Cleanup function to prevent memory leaks
+        return () => {
+            isMounted = false;
+            if (checkGoogleInterval) clearInterval(checkGoogleInterval);
+            if (timeoutId) clearTimeout(timeoutId);
+        };
     }, []);
 
     return (
@@ -1019,9 +1040,53 @@ const Editor: React.FC<{
   const handleCoverImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) {
+          // Check file size - warn if too large (> 500KB before compression)
+          if (file.size > 5 * 1024 * 1024) {
+              alert('Image is too large. Please use an image under 5MB or provide a URL instead.');
+              return;
+          }
+          
+          // Compress image using canvas to reduce size for Firestore
+          const img = new Image();
           const reader = new FileReader();
-          reader.onloadend = () => {
-               setEditedPost({...editedPost, coverImage: reader.result as string});
+          
+          reader.onload = (event) => {
+              img.onload = () => {
+                  // Create canvas for compression
+                  const canvas = document.createElement('canvas');
+                  const ctx = canvas.getContext('2d');
+                  
+                  // Calculate new dimensions (max 1200px width/height)
+                  const maxSize = 1200;
+                  let { width, height } = img;
+                  
+                  if (width > height && width > maxSize) {
+                      height = (height * maxSize) / width;
+                      width = maxSize;
+                  } else if (height > maxSize) {
+                      width = (width * maxSize) / height;
+                      height = maxSize;
+                  }
+                  
+                  canvas.width = width;
+                  canvas.height = height;
+                  
+                  // Draw and compress
+                  ctx?.drawImage(img, 0, 0, width, height);
+                  
+                  // Convert to JPEG with 70% quality for smaller size
+                  const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+                  
+                  // Check if compressed size is acceptable (< 800KB for Firestore safety)
+                  const base64Size = (compressedBase64.length * 3) / 4; // Approximate byte size
+                  if (base64Size > 800 * 1024) {
+                      alert('Image is still too large after compression. Please use a smaller image or provide a URL instead.');
+                      return;
+                  }
+                  
+                  setEditedPost({...editedPost, coverImage: compressedBase64});
+              };
+              img.src = event.target?.result as string;
           };
           reader.readAsDataURL(file);
       }
@@ -1102,11 +1167,22 @@ const Editor: React.FC<{
 
                <div>
                    <label className="block text-xs font-bold text-stone-500 uppercase mb-2">Cover Image</label>
-                   <div className="flex flex-col gap-2">
-                        <label className="cursor-pointer bg-white border border-stone-300 text-stone-600 px-4 py-2 rounded-lg hover:bg-stone-50 transition-colors text-sm font-medium w-fit flex items-center gap-2">
-                            <Icons.Camera size={16}/> Upload Cover
-                            <input type="file" accept="image/*" className="hidden" onChange={handleCoverImageUpload} />
-                        </label>
+                   <div className="flex flex-col gap-3">
+                        <div className="flex gap-2">
+                            <label className="cursor-pointer bg-white border border-stone-300 text-stone-600 px-3 py-2 rounded-lg hover:bg-stone-50 transition-colors text-xs font-medium flex items-center gap-1">
+                                <Icons.Camera size={14}/> Upload
+                                <input type="file" accept="image/*" className="hidden" onChange={handleCoverImageUpload} />
+                            </label>
+                            <span className="text-xs text-stone-400 self-center">or</span>
+                        </div>
+                        <input 
+                            type="url"
+                            placeholder="Paste image URL..."
+                            value={editedPost.coverImage?.startsWith('data:') ? '' : editedPost.coverImage || ''}
+                            onChange={(e) => setEditedPost({...editedPost, coverImage: e.target.value})}
+                            className="w-full px-3 py-2 bg-stone-50 rounded-lg text-xs border border-stone-200 outline-none focus:border-stone-800"
+                        />
+                        <p className="text-[10px] text-stone-400">Tip: Use image URLs from Unsplash, Imgur, or any public link</p>
                         {editedPost.coverImage && (
                             <img src={editedPost.coverImage} className="w-full h-32 object-cover rounded-lg bg-stone-100 border border-stone-200" />
                         )}
