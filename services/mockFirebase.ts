@@ -9,9 +9,10 @@ import {
   addDoc, 
   setDoc,
   deleteDoc,
+  updateDoc,
+  increment,
   query, 
   where, 
-  orderBy,
   serverTimestamp,
   Timestamp
 } from 'firebase/firestore';
@@ -73,14 +74,11 @@ export const getSubscribers = async (): Promise<string[]> => {
 export const getComments = async (postId: string): Promise<Comment[]> => {
   try {
     const commentsRef = collection(db, COLLECTIONS.COMMENTS);
-    const q = query(
-      commentsRef, 
-      where('postId', '==', postId),
-      orderBy('createdAt', 'desc')
-    );
+    // Simple query without orderBy to avoid index requirement
+    const q = query(commentsRef, where('postId', '==', postId));
     const querySnapshot = await getDocs(q);
     
-    return querySnapshot.docs.map(doc => {
+    const comments = querySnapshot.docs.map(doc => {
       const data = doc.data();
       return {
         id: doc.id,
@@ -91,9 +89,14 @@ export const getComments = async (postId: string): Promise<Comment[]> => {
         content: data.content,
         createdAt: data.createdAt instanceof Timestamp 
           ? data.createdAt.toDate().toISOString() 
-          : data.createdAt
+          : (data.createdAt || new Date().toISOString())
       };
     });
+    
+    // Sort on client side (newest first)
+    return comments.sort((a, b) => 
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
   } catch (error) {
     console.error('Error getting comments:', error);
     return [];
@@ -153,13 +156,28 @@ export const toggleLike = async (postId: string, userId: string): Promise<{ like
       liked = true;
     }
     
-    // Get updated count
+    // Get the actual count from likes collection (source of truth)
     const count = await getLikeCount(postId);
+    
+    // Sync the post's likesCount with the actual count
+    await syncPostLikesCount(postId, count);
     
     return { liked, count };
   } catch (error) {
     console.error('Error toggling like:', error);
     throw error;
+  }
+};
+
+// Sync post's likesCount with the actual count from likes collection
+const syncPostLikesCount = async (postId: string, actualCount: number): Promise<void> => {
+  try {
+    const postRef = doc(db, COLLECTIONS.POSTS, postId);
+    await updateDoc(postRef, {
+      likesCount: actualCount
+    });
+  } catch (error) {
+    console.error('Error syncing likes count:', error);
   }
 };
 
@@ -264,6 +282,43 @@ export const deletePost = async (postId: string): Promise<void> => {
   } catch (error) {
     console.error('Error deleting post:', error);
     throw error;
+  }
+};
+
+// Increment view count for a post
+export const incrementViews = async (postId: string): Promise<void> => {
+  try {
+    const postRef = doc(db, COLLECTIONS.POSTS, postId);
+    await updateDoc(postRef, {
+      views: increment(1)
+    });
+  } catch (error) {
+    console.error('Error incrementing views:', error);
+    // Don't throw - views are non-critical
+  }
+};
+
+// Update likes count on the post document
+export const updatePostLikesCount = async (postId: string, delta: number): Promise<void> => {
+  try {
+    const postRef = doc(db, COLLECTIONS.POSTS, postId);
+    
+    // For decrements, check current value first to avoid negative counts
+    if (delta < 0) {
+      const postDoc = await getDoc(postRef);
+      if (postDoc.exists()) {
+        const currentCount = postDoc.data().likesCount || 0;
+        if (currentCount <= 0) {
+          return; // Don't decrement if already 0 or less
+        }
+      }
+    }
+    
+    await updateDoc(postRef, {
+      likesCount: increment(delta)
+    });
+  } catch (error) {
+    console.error('Error updating likes count:', error);
   }
 };
 

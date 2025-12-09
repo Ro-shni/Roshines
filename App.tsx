@@ -612,17 +612,27 @@ const LikeButton = ({ postId, initialCount, initialLiked, userId }: { postId: st
     const [count, setCount] = useState(initialCount);
     const [animate, setAnimate] = useState(false);
 
+    // Sync state when props change (e.g., after fetching real data from Firestore)
+    useEffect(() => {
+        setLiked(initialLiked);
+        setCount(initialCount);
+    }, [initialLiked, initialCount]);
+
     const handleToggle = async () => {
         if (!userId) return; 
         const newLiked = !liked;
         setLiked(newLiked);
-        setCount(c => newLiked ? c + 1 : c - 1);
+        setCount(c => newLiked ? c + 1 : Math.max(0, c - 1)); // Never go below 0
         if (newLiked) setAnimate(true);
         try {
-            await db.toggleLike(postId, userId);
+            const result = await db.toggleLike(postId, userId);
+            // Update with actual count from server
+            setCount(result.count);
+            setLiked(result.liked);
         } catch (e) {
+            // Revert on error
             setLiked(!newLiked);
-            setCount(c => !newLiked ? c + 1 : c - 1);
+            setCount(c => !newLiked ? c + 1 : Math.max(0, c - 1));
         }
     };
     useEffect(() => { if(animate) { const t = setTimeout(() => setAnimate(false), 500); return () => clearTimeout(t); } }, [animate]);
@@ -699,7 +709,7 @@ const CommentSection = ({ postId, currentUser, onLoginReq }: { postId: string, c
     );
 };
 
-const PostDetailView = ({ post, onBack, currentUser, onLoginReq }: { post: BlogPost, onBack: () => void, currentUser: User | null, onLoginReq: () => void }) => {
+const PostDetailView = ({ post, onBack, currentUser, onLoginReq, onEdit }: { post: BlogPost, onBack: () => void, currentUser: User | null, onLoginReq: () => void, onEdit?: () => void }) => {
     const [likeStatus, setLikeStatus] = useState({ liked: false, count: post.likesCount || 0 });
 
     useEffect(() => {
@@ -714,10 +724,16 @@ const PostDetailView = ({ post, onBack, currentUser, onLoginReq }: { post: BlogP
             <div className="h-[50vh] md:h-[60vh] relative overflow-hidden">
                 <img src={post.coverImage} alt={post.title} className="w-full h-full object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-                <div className="absolute top-6 left-6 z-20">
+                <div className="absolute top-6 left-6 z-20 flex gap-2">
                     <button onClick={onBack} className="bg-white/20 backdrop-blur-md text-white p-3 rounded-full hover:bg-white/30 transition-colors">
                         <Icons.ChevronLeft size={24} />
                     </button>
+                    {currentUser?.isAdmin && onEdit && (
+                        <button onClick={onEdit} className="bg-white/20 backdrop-blur-md text-white p-3 rounded-full hover:bg-white/30 transition-colors flex items-center gap-2">
+                            <Icons.PenTool size={20} />
+                            <span className="text-sm font-medium hidden md:inline">Edit</span>
+                        </button>
+                    )}
                 </div>
                 <div className="absolute bottom-0 left-0 right-0 p-6 md:p-12 text-white max-w-4xl mx-auto">
                     <span className="inline-block px-3 py-1 rounded-md bg-white/20 backdrop-blur text-xs font-bold uppercase tracking-widest mb-4">{post.category}</span>
@@ -1341,7 +1357,7 @@ const App: React.FC = () => {
       }
   }, [posts]);
   
-  // View counting logic
+  // View counting logic - also save to Firestore
   useEffect(() => {
     if (view.type === 'post') {
         const postId = view.postId;
@@ -1351,6 +1367,11 @@ const App: React.FC = () => {
                 p.id === postId ? { ...p, views: (p.views || 0) + 1 } : p
             ));
             lastViewedIdRef.current = postId;
+            
+            // Save view to Firestore
+            db.incrementViews(postId).catch(err => 
+                console.error('Failed to save view count:', err)
+            );
         }
     } else {
         // Reset when navigating away from a post
@@ -1442,7 +1463,15 @@ const App: React.FC = () => {
         return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} heroImage={siteSettings.heroImage} />;
       case 'post':
         const post = posts.find(p => p.id === view.postId);
-        return post ? <PostDetailView post={post} onBack={() => setView({ type: 'home' })} currentUser={user} onLoginReq={() => setView({ type: 'login' })} /> : <div>Post not found</div>;
+        return post ? (
+          <PostDetailView 
+            post={post} 
+            onBack={() => setView({ type: 'home' })} 
+            currentUser={user} 
+            onLoginReq={() => setView({ type: 'login' })}
+            onEdit={() => setView({ type: 'admin-editor', postId: post.id })}
+          />
+        ) : <div>Post not found</div>;
       case 'about':
         return <AboutView aboutImage={siteSettings.aboutImage} signatureImage={siteSettings.signatureImage} />;
       case 'login':
