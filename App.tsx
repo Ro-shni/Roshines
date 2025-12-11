@@ -198,10 +198,16 @@ const Footer = ({ onOpenNewsletter, onNavigate }: { onOpenNewsletter: () => void
     </footer>
 );
 
-const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, onClose: () => void, onSubscribe: (email: string) => void }) => {
+const NewsletterModal = ({ isOpen, onClose, onSubscribe, currentUser }: { isOpen: boolean, onClose: () => void, onSubscribe: (email: string) => void, currentUser: User | null }) => {
     const [email, setEmail] = useState('');
     const [status, setStatus] = useState<'idle' | 'sending' | 'success'>('idle');
     const form = useRef<HTMLFormElement>(null);
+
+    useEffect(() => {
+        if (currentUser?.email) {
+            setEmail(currentUser.email);
+        }
+    }, [currentUser, isOpen]);
 
     if (!isOpen) return null;
     
@@ -278,9 +284,9 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe }: { isOpen: boolean, on
                                 placeholder="your@email.com" 
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
-                                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 mb-3 outline-none focus:border-stone-400 transition-colors"
+                                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 mb-3 outline-none focus:border-stone-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                                 required
-                                disabled={status === 'sending'}
+                                disabled={status === 'sending' || !!currentUser}
                             />
                             
                             <button type="submit" disabled={status === 'sending'} className="w-full bg-stone-900 text-white font-bold py-3 rounded-xl hover:bg-stone-800 transition-transform active:scale-95 disabled:opacity-70 flex items-center justify-center gap-2">
@@ -606,8 +612,29 @@ const AdminSettings = ({ settings, onSave, onCancel }: { settings: SiteSettings,
     );
 };
 
+const RestrictionModal = ({ isOpen, onClose, onLogin }: { isOpen: boolean, onClose: () => void, onLogin: () => void }) => {
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center relative">
+                 <button onClick={onClose} className="absolute right-4 top-4 text-stone-400 hover:text-stone-600"><Icons.X size={20}/></button>
+                <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mb-6 mx-auto">
+                    <Icons.Heart size={32} />
+                </div>
+                <h3 className="text-2xl font-serif font-bold text-stone-900 mb-3">Show Your Love</h3>
+                <p className="text-stone-500 mb-8">
+                    You have to login to shower your love.
+                </p>
+                <button onClick={onLogin} className="w-full py-3 bg-stone-900 text-white rounded-xl font-bold hover:bg-stone-800 transition-colors shadow-lg">
+                    Login
+                </button>
+            </div>
+        </div>
+    );
+};
+
 // ... LikeButton, CommentSection, PostDetailView, HomeView, DeleteConfirmationModal, AdminDashboard, Editor components remain same ...
-const LikeButton = ({ postId, initialCount, initialLiked, userId }: { postId: string, initialCount: number, initialLiked: boolean, userId?: string }) => {
+const LikeButton = ({ postId, initialCount, initialLiked, userId, onRestricted }: { postId: string, initialCount: number, initialLiked: boolean, userId?: string, onRestricted: () => void }) => {
     const [liked, setLiked] = useState(initialLiked);
     const [count, setCount] = useState(initialCount);
     const [animate, setAnimate] = useState(false);
@@ -619,7 +646,7 @@ const LikeButton = ({ postId, initialCount, initialLiked, userId }: { postId: st
     }, [initialLiked, initialCount]);
 
     const handleToggle = async () => {
-        if (!userId) return; 
+        if (!userId) { onRestricted(); return; }
         const newLiked = !liked;
         setLiked(newLiked);
         setCount(c => newLiked ? c + 1 : Math.max(0, c - 1)); // Never go below 0
@@ -640,7 +667,6 @@ const LikeButton = ({ postId, initialCount, initialLiked, userId }: { postId: st
     return (
         <button 
             onClick={handleToggle}
-            disabled={!userId}
             className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all duration-300 ${liked ? 'bg-rose-50 text-rose-600' : 'bg-stone-50 text-stone-500 hover:bg-stone-100'}`}
         >
             <Icons.Sparkles size={18} className={`transition-transform duration-300 ${animate ? 'scale-150 rotate-12' : ''} ${liked ? 'fill-rose-600' : ''}`}/>
@@ -649,7 +675,7 @@ const LikeButton = ({ postId, initialCount, initialLiked, userId }: { postId: st
     );
 };
 
-const CommentSection = ({ postId, currentUser, onLoginReq }: { postId: string, currentUser: User | null, onLoginReq: () => void }) => {
+const CommentSection = ({ postId, currentUser, onRestricted }: { postId: string, currentUser: User | null, onRestricted: () => void }) => {
     const [comments, setComments] = useState<Comment[]>([]);
     const [newComment, setNewComment] = useState('');
     const [loading, setLoading] = useState(false);
@@ -658,7 +684,7 @@ const CommentSection = ({ postId, currentUser, onLoginReq }: { postId: string, c
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!currentUser) { onLoginReq(); return; }
+        if (!currentUser) { onRestricted(); return; }
         if (!newComment.trim()) return;
         setLoading(true);
         try {
@@ -680,13 +706,14 @@ const CommentSection = ({ postId, currentUser, onLoginReq }: { postId: string, c
                     disabled={loading}
                 />
                 <div className="absolute bottom-4 right-4">
-                    {currentUser ? (
-                         <button type="submit" disabled={!newComment.trim() || loading} className="bg-stone-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-stone-800 disabled:opacity-50 transition-colors">
+                        <button 
+                            type="submit" 
+                            onClick={!currentUser ? (e) => { e.preventDefault(); onRestricted(); } : undefined} 
+                            disabled={(!newComment.trim() && !!currentUser) || loading} 
+                            className="bg-stone-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-stone-800 disabled:opacity-50 transition-colors"
+                        >
                             {loading ? 'Posting...' : 'Post Comment'}
                         </button>
-                    ) : (
-                        <button type="button" onClick={onLoginReq} className="text-sm font-bold text-stone-900 underline">Login to post</button>
-                    )}
                 </div>
             </form>
             <div className="space-y-8">
@@ -709,7 +736,7 @@ const CommentSection = ({ postId, currentUser, onLoginReq }: { postId: string, c
     );
 };
 
-const PostDetailView = ({ post, onBack, currentUser, onLoginReq, onEdit }: { post: BlogPost, onBack: () => void, currentUser: User | null, onLoginReq: () => void, onEdit?: () => void }) => {
+const PostDetailView = ({ post, onBack, currentUser, onRestricted, onEdit }: { post: BlogPost, onBack: () => void, currentUser: User | null, onRestricted: () => void, onEdit?: () => void }) => {
     const [likeStatus, setLikeStatus] = useState({ liked: false, count: post.likesCount || 0 });
 
     useEffect(() => {
@@ -754,9 +781,9 @@ const PostDetailView = ({ post, onBack, currentUser, onLoginReq, onEdit }: { pos
                     <div className="flex flex-wrap gap-2">
                         {post.tags.map(tag => <span key={tag} className="text-xs font-bold text-stone-500 bg-stone-100 px-3 py-1 rounded-full uppercase tracking-wider">#{tag}</span>)}
                     </div>
-                    <LikeButton postId={post.id} initialCount={likeStatus.count} initialLiked={likeStatus.liked} userId={currentUser?.id} />
+                    <LikeButton postId={post.id} initialCount={likeStatus.count} initialLiked={likeStatus.liked} userId={currentUser?.id} onRestricted={onRestricted} />
                 </div>
-                <CommentSection postId={post.id} currentUser={currentUser} onLoginReq={onLoginReq} />
+                <CommentSection postId={post.id} currentUser={currentUser} onRestricted={onRestricted} />
             </div>
         </article>
     );
@@ -1115,7 +1142,7 @@ const Editor: React.FC<{
                   <h2 className="font-bold text-stone-500">Preview Mode</h2>
                   <button onClick={() => setIsPreview(false)} className="bg-stone-900 text-white px-4 py-2 rounded-lg font-bold text-sm">Close Preview</button>
               </div>
-              <PostDetailView post={editedPost} onBack={() => setIsPreview(false)} currentUser={null} onLoginReq={() => {}} />
+              <PostDetailView post={editedPost} onBack={() => setIsPreview(false)} currentUser={null} onRestricted={() => {}} />
           </div>
       )
   }
@@ -1287,6 +1314,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [newsletterOpen, setNewsletterOpen] = useState(false);
+  const [restrictionOpen, setRestrictionOpen] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
   const [siteSettings, setSiteSettings] = useState<SiteSettings>({
       siteName: 'Ro-shines',
@@ -1468,7 +1496,7 @@ const App: React.FC = () => {
             post={post} 
             onBack={() => setView({ type: 'home' })} 
             currentUser={user} 
-            onLoginReq={() => setView({ type: 'login' })}
+            onRestricted={() => setRestrictionOpen(true)}
             onEdit={() => setView({ type: 'admin-editor', postId: post.id })}
           />
         ) : <div>Post not found</div>;
@@ -1533,7 +1561,8 @@ const App: React.FC = () => {
 
       {view.type !== 'admin-editor' && <Footer onOpenNewsletter={() => setNewsletterOpen(true)} onNavigate={setView} />}
 
-      <NewsletterModal isOpen={newsletterOpen} onClose={() => setNewsletterOpen(false)} onSubscribe={(email) => console.log('Subscribed:', email)} />
+      <NewsletterModal isOpen={newsletterOpen} onClose={() => setNewsletterOpen(false)} onSubscribe={(email) => console.log('Subscribed:', email)} currentUser={user} />
+      <RestrictionModal isOpen={restrictionOpen} onClose={() => setRestrictionOpen(false)} onLogin={() => { setRestrictionOpen(false); setView({ type: 'login' }); }} />
     </div>
   );
 };
