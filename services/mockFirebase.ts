@@ -27,7 +27,7 @@ const COLLECTIONS = {
 
 // --- Firestore Service: Subscribers ---
 
-export const subscribeUser = async (email: string): Promise<void> => {
+export const subscribeUser = async (email: string): Promise<{ isNewSubscriber: boolean }> => {
   try {
     // Check if already subscribed
     const subscribersRef = collection(db, COLLECTIONS.SUBSCRIBERS);
@@ -40,6 +40,9 @@ export const subscribeUser = async (email: string): Promise<void> => {
         email,
         subscribedAt: serverTimestamp()
       });
+      return { isNewSubscriber: true };
+    } else {
+      return { isNewSubscriber: false };
     }
   } catch (error) {
     console.error('Error subscribing user:', error);

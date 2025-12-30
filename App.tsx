@@ -200,7 +200,7 @@ const Footer = ({ onOpenNewsletter, onNavigate }: { onOpenNewsletter: () => void
 
 const NewsletterModal = ({ isOpen, onClose, onSubscribe, currentUser }: { isOpen: boolean, onClose: () => void, onSubscribe: (email: string) => void, currentUser: User | null }) => {
     const [email, setEmail] = useState('');
-    const [status, setStatus] = useState<'idle' | 'sending' | 'success'>('idle');
+    const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'already_subscribed'>('idle');
     const form = useRef<HTMLFormElement>(null);
 
     useEffect(() => {
@@ -208,6 +208,13 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe, currentUser }: { isOpen
             setEmail(currentUser.email);
         }
     }, [currentUser, isOpen]);
+
+    // Reset status when modal opens/closes
+    useEffect(() => {
+        if (isOpen) {
+            setStatus('idle');
+        }
+    }, [isOpen]);
 
     if (!isOpen) return null;
     
@@ -228,25 +235,31 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe, currentUser }: { isOpen
         setStatus('sending');
         
         try {
-            await db.subscribeUser(email);
+            const result = await db.subscribeUser(email);
 
-            const templateParams = {
-                email: email,
-                to_name: 'Subscriber',
-                from_name: 'Ro-shines',
-                message: 'Welcome to the Ro-shines community!'
-            };
-            
-            await send(
-                import.meta.env.VITE_EMAILJS_SERVICE_ID,
-                import.meta.env.VITE_EMAILJS_TEMPLATE_ID,
-                templateParams,
-                { publicKey: import.meta.env.VITE_EMAILJS_PUBLIC_KEY }
-            );
-            console.log('Email sent successfully via EmailJS');
+            if (result.isNewSubscriber) {
+                // Only send welcome email for new subscribers
+                const templateParams = {
+                    email: email,
+                    to_name: 'Subscriber',
+                    from_name: 'Ro-shines',
+                    message: 'Welcome to the Ro-shines community!'
+                };
+                
+                await send(
+                    import.meta.env.VITE_EMAILJS_SERVICE_ID,
+                    import.meta.env.VITE_EMAILJS_TEMPLATE_ID,
+                    templateParams,
+                    { publicKey: import.meta.env.VITE_EMAILJS_PUBLIC_KEY }
+                );
+                console.log('Email sent successfully via EmailJS');
 
-            onSubscribe(email);
-            setStatus('success');
+                onSubscribe(email);
+                setStatus('success');
+            } else {
+                // User is already subscribed
+                setStatus('already_subscribed');
+            }
         } catch (error: any) {
             console.error('EmailJS Failed:', error);
             const errorText = parseError(error);
@@ -268,6 +281,17 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe, currentUser }: { isOpen
                         <h3 className="text-2xl font-serif font-bold text-stone-900 mb-2">Welcome Aboard!</h3>
                         <p className="text-stone-500 mb-6">We've sent a warm welcome letter to <b>{email}</b>.</p>
                      </div>
+                ) : status === 'already_subscribed' ? (
+                    <div className="text-center animate-fade-in">
+                        <div className="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-600">
+                            <Icons.Check size={32} />
+                        </div>
+                        <h3 className="text-2xl font-serif font-bold text-stone-900 mb-2">Already Subscribed!</h3>
+                        <p className="text-stone-500 mb-6">You're already part of the Ro-shines community. Thank you for your continued support!</p>
+                        <button onClick={onClose} className="w-full bg-stone-900 text-white font-bold py-3 rounded-xl hover:bg-stone-800 transition-colors">
+                            Close
+                        </button>
+                    </div>
                 ) : (
                     <>
                         <div className="text-center mb-8">
