@@ -11,7 +11,8 @@ import {
   AlignLeft, AlignCenter, AlignRight,
   Video, Code, ListOrdered, Minus,
   Clock, Hash, Tag, ChevronDown, ChevronUp,
-  AlertCircle, Palette, Heart
+  AlertCircle, Palette, Heart, ThumbsUp, 
+  MessageCircle, Smile
 } from 'lucide-react';
 
 export const Icons = {
@@ -25,5 +26,6 @@ export const Icons = {
   AlignLeft, AlignCenter, AlignRight,
   Video, Code, ListOrdered, Minus,
   Clock, Hash, Tag, ChevronDown, ChevronUp,
-  AlertCircle, Palette, Heart
+  AlertCircle, Palette, Heart, ThumbsUp,
+  MessageCircle, Smile
 };

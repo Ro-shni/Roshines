@@ -702,9 +702,36 @@ const LikeButton = ({ postId, initialCount, initialLiked, userId, onRestricted }
 const CommentSection = ({ postId, currentUser, onRestricted }: { postId: string, currentUser: User | null, onRestricted: () => void }) => {
     const [comments, setComments] = useState<Comment[]>([]);
     const [newComment, setNewComment] = useState('');
+    const [replyingTo, setReplyingTo] = useState<string | null>(null);
+    const [replyText, setReplyText] = useState<{ [key: string]: string }>({});
     const [loading, setLoading] = useState(false);
+    const [emojiPickerOpen, setEmojiPickerOpen] = useState<{ [commentId: string]: boolean }>({});
+    const [imageErrors, setImageErrors] = useState<Set<string>>(new Set());
 
-    useEffect(() => { db.getComments(postId).then(setComments); }, [postId]);
+    const loadComments = async () => {
+        try {
+            const loadedComments = await db.getComments(postId, currentUser?.id);
+            setComments(loadedComments);
+        } catch (error) {
+            console.error('Error loading comments:', error);
+        }
+    };
+
+    useEffect(() => { 
+        loadComments();
+    }, [postId, currentUser?.id]);
+
+    // Close emoji picker when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            const target = event.target as Element;
+            if (!target.closest('.emoji-picker-container') && !target.closest('.emoji-picker-trigger')) {
+                setEmojiPickerOpen({});
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -712,15 +739,317 @@ const CommentSection = ({ postId, currentUser, onRestricted }: { postId: string,
         if (!newComment.trim()) return;
         setLoading(true);
         try {
-            const comment = await db.addComment(postId, currentUser, newComment);
-            setComments([comment, ...comments]);
+            await db.addComment(postId, currentUser, newComment);
+            // Small delay to ensure Firestore has processed the write
+            await new Promise(resolve => setTimeout(resolve, 100));
+            // Reload all comments to get proper structure with reactions
+            const updatedComments = await db.getComments(postId, currentUser.id);
+            setComments(updatedComments);
             setNewComment('');
+        } catch (error) {
+            console.error('Error adding comment:', error);
+            alert('Failed to post comment. Please try again.');
         } finally { setLoading(false); }
     };
 
+    const handleReply = async (parentId: string, replyContent: string) => {
+        if (!currentUser) { onRestricted(); return; }
+        if (!replyContent.trim()) return;
+        setLoading(true);
+        try {
+            await db.addComment(postId, currentUser, replyContent, parentId);
+            // Small delay to ensure Firestore has processed the write
+            await new Promise(resolve => setTimeout(resolve, 100));
+            // Reload comments to get nested structure
+            const updatedComments = await db.getComments(postId, currentUser.id);
+            setComments(updatedComments);
+            setReplyText({ ...replyText, [parentId]: '' });
+            setReplyingTo(null);
+        } catch (error) {
+            console.error('Error adding reply:', error);
+            alert('Failed to post reply. Please try again.');
+        } finally { setLoading(false); }
+    };
+
+    const handleReaction = async (commentId: string, reactionType: string) => {
+        if (!currentUser) { 
+            onRestricted(); 
+            return; 
+        }
+        
+        // Optimistically update UI
+        setComments(prevComments => {
+            return prevComments.map(comment => {
+                const updateCommentReactions = (c: Comment): Comment => {
+                    const reactions = { ...(c.reactions || {}) };
+                    const userReactions = [...(c.userReactions || [])];
+                    const currentCount = reactions[reactionType] || 0;
+                    const hasReacted = userReactions.includes(reactionType);
+                    
+                    if (hasReacted) {
+                        reactions[reactionType] = Math.max(0, currentCount - 1);
+                        return {
+                            ...c,
+                            reactions,
+                            userReactions: userReactions.filter(r => r !== reactionType)
+                        };
+                    } else {
+                        reactions[reactionType] = currentCount + 1;
+                        return {
+                            ...c,
+                            reactions,
+                            userReactions: [...userReactions, reactionType]
+                        };
+                    }
+                };
+                
+                if (comment.id === commentId) {
+                    return updateCommentReactions(comment);
+                }
+                
+                // Check replies
+                if (comment.replies && comment.replies.length > 0) {
+                    return {
+                        ...comment,
+                        replies: comment.replies.map(reply => 
+                            reply.id === commentId ? updateCommentReactions(reply) : reply
+                        )
+                    };
+                }
+                
+                return comment;
+            });
+        });
+        
+        try {
+            console.log('Calling toggleReaction:', { postId, commentId, userId: currentUser.id, reactionType });
+            const result = await db.toggleReaction(postId, commentId, currentUser.id, reactionType);
+            console.log('Toggle reaction result:', result);
+            
+            // Longer delay to ensure Firestore has processed the write and indexes are updated
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Reload comments to sync with server
+            const updatedComments = await db.getComments(postId, currentUser.id);
+            console.log('Reloaded comments:', updatedComments.length);
+            console.log('First comment reactions:', updatedComments[0]?.reactions);
+            setComments(updatedComments);
+        } catch (error) {
+            console.error('Error toggling reaction:', error);
+            alert(`Failed to save reaction: ${error instanceof Error ? error.message : String(error)}`);
+            // Reload on error to revert optimistic update
+            try {
+                const updatedComments = await db.getComments(postId, currentUser.id);
+                setComments(updatedComments);
+            } catch (reloadError) {
+                console.error('Error reloading comments after reaction error:', reloadError);
+            }
+        }
+    };
+
+    // Common emoji reactions
+    const EMOJI_OPTIONS = [
+        { emoji: '😂', name: 'joy' },
+        { emoji: '😍', name: 'heart_eyes' },
+        { emoji: '😮', name: 'open_mouth' },
+        { emoji: '👍', name: 'thumbsup' },
+        { emoji: '👎', name: 'thumbsdown' },
+        { emoji: '👏', name: 'clap' },
+        { emoji: '🔥', name: 'fire' },
+        { emoji: '❤️', name: 'red_heart' },
+        { emoji: '✨', name: 'sparkles' },
+        { emoji: '🎉', name: 'party' },
+        { emoji: '💯', name: 'hundred' }
+    ];
+
+    const renderComment = (comment: Comment, isReply = false) => {
+        const reactions = comment.reactions || {};
+        const userReactions = comment.userReactions || [];
+        const isReplying = replyingTo === comment.id;
+        const isEmojiPickerOpen = emojiPickerOpen[comment.id] || false;
+
+        // Get all reaction emojis that have counts > 0, sorted by count descending
+        const activeReactions = Object.entries(reactions)
+            .filter(([_, count]) => typeof count === 'number' && count > 0)
+            .map(([emoji, count]) => ({ emoji, count: count as number }))
+            .sort((a, b) => b.count - a.count);
+
+        return (
+            <div key={comment.id} className={`${isReply ? 'ml-12 mt-4 border-l-2 border-stone-100 pl-4' : ''} animate-fade-in`}>
+                <div className="flex gap-4">
+                    <div className="w-10 h-10 rounded-full bg-stone-200 flex items-center justify-center text-stone-500 font-bold overflow-hidden flex-shrink-0 relative">
+                        {comment.userAvatar && !imageErrors.has(comment.id) ? (
+                            <img 
+                                src={comment.userAvatar} 
+                                alt={comment.userName}
+                                className="w-full h-full object-cover"
+                                loading="lazy"
+                                onError={() => {
+                                    // Mark this image as failed and trigger re-render
+                                    setImageErrors(prev => new Set(prev).add(comment.id));
+                                }}
+                            />
+                        ) : (
+                            <span className="w-full h-full flex items-center justify-center">{comment.userName.charAt(0)}</span>
+                        )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="font-bold text-stone-900 text-sm">{comment.userName}</span>
+                            <span className="text-xs text-stone-400">• {new Date(comment.createdAt).toLocaleDateString()}</span>
+                        </div>
+                        <p className="text-stone-600 text-sm leading-relaxed mb-3">{comment.content}</p>
+                        
+                        {/* Reactions */}
+                        <div className="flex items-center gap-3 mb-3 flex-wrap">
+                            {/* Heart Button */}
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleReaction(comment.id, '❤️');
+                                }}
+                                className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs transition-colors ${
+                                    userReactions.includes('❤️') 
+                                        ? 'bg-rose-100 text-rose-600' 
+                                        : 'bg-stone-100 text-stone-500 hover:bg-stone-200'
+                                }`}
+                            >
+                                <span className="text-sm">❤️</span>
+                                <span className="font-medium">{reactions['❤️'] || 0}</span>
+                            </button>
+
+                            {/* Reaction Button with Emoji Picker */}
+                            <div className="relative emoji-picker-container">
+                                <button
+                                    type="button"
+                                    className="emoji-picker-trigger flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-stone-100 text-stone-500 hover:bg-stone-200 transition-colors"
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setEmojiPickerOpen({ ...emojiPickerOpen, [comment.id]: !isEmojiPickerOpen });
+                                    }}
+                                >
+                                    <span className="text-sm">😊</span>
+                                    <span className="text-xs">React</span>
+                                </button>
+                                
+                                {/* Emoji Picker */}
+                                {isEmojiPickerOpen && (
+                                    <div className="absolute bottom-full left-0 mb-2 bg-white border border-stone-200 rounded-xl shadow-xl p-3 z-50 animate-fade-in emoji-picker-container min-w-[200px]">
+                                        <div className="grid grid-cols-4 gap-2">
+                                            {EMOJI_OPTIONS.map(({ emoji, name }) => (
+                                                <button
+                                                    key={name}
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        handleReaction(comment.id, emoji);
+                                                        setEmojiPickerOpen({ ...emojiPickerOpen, [comment.id]: false });
+                                                    }}
+                                                    className={`w-10 h-10 flex items-center justify-center rounded-lg text-xl hover:bg-stone-100 transition-colors ${
+                                                        userReactions.includes(emoji) ? 'bg-blue-50 ring-2 ring-blue-200' : ''
+                                                    }`}
+                                                    title={name}
+                                                >
+                                                    {emoji}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Display Active Reactions */}
+                            {activeReactions.length > 0 && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    {activeReactions.map(({ emoji, count }) => {
+                                        const numCount = typeof count === 'number' ? count : 0;
+                                        return (
+                                            <button
+                                                key={emoji}
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    handleReaction(comment.id, emoji);
+                                                }}
+                                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors ${
+                                                    userReactions.includes(emoji)
+                                                        ? 'bg-blue-100 text-blue-600 border border-blue-200'
+                                                        : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border border-stone-200'
+                                                }`}
+                                            >
+                                                <span className="text-sm">{emoji}</span>
+                                                <span className="font-semibold text-xs">{numCount}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {!isReply && (
+                                <button
+                                    type="button"
+                                    onClick={() => setReplyingTo(isReplying ? null : comment.id)}
+                                    className="flex items-center gap-1 text-xs text-stone-500 hover:text-stone-900 transition-colors"
+                                >
+                                    <Icons.MessageCircle size={14} />
+                                    Reply
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Reply Form */}
+                        {isReplying && (
+                            <div className="mb-4">
+                                <textarea
+                                    value={replyText[comment.id] || ''}
+                                    onChange={(e) => setReplyText({ ...replyText, [comment.id]: e.target.value })}
+                                    placeholder="Write a reply..."
+                                    className="w-full bg-stone-50 rounded-xl p-3 text-sm outline-none border border-stone-200 focus:border-stone-400 focus:bg-white transition-all resize-none"
+                                    rows={2}
+                                />
+                                <div className="flex gap-2 mt-2">
+                                    <button
+                                        onClick={() => handleReply(comment.id, replyText[comment.id] || '')}
+                                        disabled={!replyText[comment.id]?.trim() || loading}
+                                        className="bg-stone-900 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-stone-800 disabled:opacity-50 transition-colors"
+                                    >
+                                        {loading ? 'Posting...' : 'Post Reply'}
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setReplyingTo(null);
+                                            setReplyText({ ...replyText, [comment.id]: '' });
+                                        }}
+                                        className="px-3 py-1.5 text-xs text-stone-500 hover:text-stone-900"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Nested Replies */}
+                        {comment.replies && comment.replies.length > 0 && (
+                            <div className="mt-4">
+                                {comment.replies.map(reply => renderComment(reply, true))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const totalComments = comments.reduce((acc, comment) => acc + 1 + (comment.replies?.length || 0), 0);
+
     return (
         <div className="mt-16 border-t border-stone-100 pt-12">
-            <h3 className="text-2xl font-serif font-bold text-stone-900 mb-8">Discussion ({comments.length})</h3>
+            <h3 className="text-2xl font-serif font-bold text-stone-900 mb-8">Discussion ({totalComments})</h3>
             <form onSubmit={handleSubmit} className="mb-12 relative">
                 <textarea 
                     value={newComment}
@@ -741,20 +1070,7 @@ const CommentSection = ({ postId, currentUser, onRestricted }: { postId: string,
                 </div>
             </form>
             <div className="space-y-8">
-                {comments.map(comment => (
-                    <div key={comment.id} className="flex gap-4 animate-fade-in">
-                         <div className="w-10 h-10 rounded-full bg-stone-200 flex items-center justify-center text-stone-500 font-bold overflow-hidden">
-                             {comment.userAvatar ? <img src={comment.userAvatar} className="w-full h-full object-cover"/> : comment.userName.charAt(0)}
-                         </div>
-                        <div>
-                            <div className="flex items-center gap-2 mb-1">
-                                <span className="font-bold text-stone-900 text-sm">{comment.userName}</span>
-                                <span className="text-xs text-stone-400">• {new Date(comment.createdAt).toLocaleDateString()}</span>
-                            </div>
-                            <p className="text-stone-600 text-sm leading-relaxed">{comment.content}</p>
-                        </div>
-                    </div>
-                ))}
+                {comments.map(comment => renderComment(comment))}
             </div>
         </div>
     );

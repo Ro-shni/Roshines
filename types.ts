@@ -75,6 +75,10 @@ export interface Comment {
   userAvatar?: string;
   content: string;
   createdAt: string;
+  parentId?: string; // For replies - if set, this is a reply to another comment
+  replies?: Comment[]; // Nested replies
+  reactions?: { [key: string]: number }; // Reaction counts: { 'like': 5, 'heart': 2, 'smile': 1 }
+  userReactions?: string[]; // Reactions by current user: ['like', 'heart']
 }
 
 export type ViewState = 
