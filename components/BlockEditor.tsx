@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
+import DOMPurify from 'dompurify';
 import { ContentBlock, BlockType } from '../types';
 import { Icons } from './Icons';
 import { generateBlogContent } from '../services/geminiService';
@@ -31,7 +32,7 @@ const RichText = ({
   useEffect(() => {
     if (contentEditableRef.current && html !== contentEditableRef.current.innerHTML) {
         if (document.activeElement !== contentEditableRef.current) {
-            contentEditableRef.current.innerHTML = html;
+            contentEditableRef.current.innerHTML = DOMPurify.sanitize(html);
         }
     }
   }, [html]);
@@ -40,7 +41,7 @@ const RichText = ({
   useEffect(() => {
     if (contentEditableRef.current) {
         if (contentEditableRef.current.innerHTML !== html) {
-            contentEditableRef.current.innerHTML = html;
+            contentEditableRef.current.innerHTML = DOMPurify.sanitize(html);
         }
     }
   }, []);
@@ -96,6 +97,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({ blocks, onChange, read
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiPrompt, setAiPrompt] = useState<string>('');
   const [showAiModal, setShowAiModal] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
   
   // Selection state for Floating Toolbar
   const [showToolbar, setShowToolbar] = useState(false);
@@ -132,7 +134,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({ blocks, onChange, read
   const addBlock = (afterId: string, type: BlockType = BlockType.Paragraph) => {
     if (readOnly) return;
     const newBlock: ContentBlock = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: crypto.randomUUID(),
       type,
       content: '',
       width: 100,
@@ -289,13 +291,17 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({ blocks, onChange, read
                 <RichText tagName="div" className={`text-lg leading-relaxed ${commonClasses}`} placeholder="List item" {...commonProps} />
             </div>
         );
-      case BlockType.OrderedList:
-         return (
+      case BlockType.OrderedList: {
+        const orderedIndex = blocks
+            .filter((_, i) => i <= blocks.indexOf(block))
+            .filter(b => b.type === BlockType.OrderedList).length;
+        return (
             <div className="flex gap-3 items-start my-2">
-                <span className="mt-1 font-bold text-stone-400 select-none">1.</span>
+                <span className="mt-1 font-bold text-stone-400 select-none">{orderedIndex}.</span>
                 <RichText tagName="div" className={`text-lg leading-relaxed ${commonClasses}`} placeholder="List item" {...commonProps} />
             </div>
         );
+      }
       case BlockType.Image:
         return <MediaBlock block={block} updateBlock={updateBlock} readOnly={readOnly} isVideo={false} />;
       case BlockType.Video:
@@ -321,7 +327,16 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({ blocks, onChange, read
             <ToolbarBtn icon={Icons.Underline} onClick={() => execCommand('underline')} />
             <ToolbarBtn icon={Icons.Link} onClick={() => {
                 const url = prompt('Enter link URL:');
-                if (url) execCommand('createLink', url);
+                if (url) {
+                    const lower = url.trim().toLowerCase();
+                    if (lower.startsWith('javascript:') || lower.startsWith('data:')) {
+                        setLinkError('That URL scheme is not allowed.');
+                        setTimeout(() => setLinkError(null), 3000);
+                        return;
+                    }
+                    setLinkError(null);
+                    execCommand('createLink', url);
+                }
             }} />
             
             {/* Color Picker */}
@@ -351,6 +366,11 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({ blocks, onChange, read
             <ToolbarBtn icon={Icons.AlignCenter} onClick={() => execCommand('justifyCenter')} />
             <ToolbarBtn icon={Icons.AlignRight} onClick={() => execCommand('justifyRight')} />
         </div>
+      )}
+      {linkError && (
+          <div className="absolute z-50 top-0 left-1/2 -translate-x-1/2 mt-1 bg-red-600 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg animate-fade-in">
+              {linkError}
+          </div>
       )}
 
       {blocks.map((block) => (
@@ -515,7 +535,11 @@ const MediaBlock = ({ block, updateBlock, readOnly, isVideo }: { block: ContentB
                         placeholder="Paste YouTube URL..." 
                         className="w-full max-w-sm mx-auto px-4 py-2 border border-stone-300 rounded-lg text-sm"
                         onBlur={(e) => {
-                            let url = e.target.value;
+                            let url = e.target.value.trim();
+                            const lower = url.toLowerCase();
+                            if (lower.startsWith('javascript:') || lower.startsWith('data:')) {
+                                return; // silently reject unsafe schemes
+                            }
                             if(url.includes('youtube.com/watch?v=')) {
                                 url = url.replace('watch?v=', 'embed/');
                             } else if (url.includes('youtu.be/')) {

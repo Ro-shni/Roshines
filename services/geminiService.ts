@@ -1,9 +1,9 @@
 import { GoogleGenAI } from "@google/genai";
 
 const getClient = () => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
   if (!apiKey) {
-    console.error("API_KEY is missing in environment variables.");
+    console.error("VITE_GEMINI_API_KEY is missing in environment variables.");
     return null;
   }
   return new GoogleGenAI({ apiKey });

@@ -1,7 +1,8 @@
 // filepath: /Users/user/Documents/Roshines/src/env.d.ts
 // Type declarations so TypeScript knows about import.meta.env VITE_* variables
 interface ImportMetaEnv {
-  readonly VITE_ADMIN_PASSWORD?: string;
+  readonly VITE_ADMIN_EMAIL: string;
+  readonly VITE_GEMINI_API_KEY?: string;
   readonly VITE_EMAILJS_SERVICE_ID?: string;
   readonly VITE_EMAILJS_TEMPLATE_ID: string;
   readonly VITE_EMAILJS_PUBLIC_KEY: string;

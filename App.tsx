@@ -5,6 +5,8 @@ import { Icons } from './components/Icons';
 import { BlockEditor } from './components/BlockEditor';
 import { generateBlogContent, suggestTitle } from './services/geminiService';
 import * as db from './services/mockFirebase';
+import { auth } from './services/firebase';
+import { GoogleAuthProvider, signInWithCredential, onAuthStateChanged } from 'firebase/auth';
 import { send } from '@emailjs/browser';
 
 // --- Constants ---
@@ -13,7 +15,7 @@ const CATEGORY_CONFIG: Record<Category, { color: string, icon: any }> = {
   [Category.Travel]: { color: 'bg-sky-100 text-sky-800', icon: Icons.Plane },
   [Category.Fashion]: { color: 'bg-rose-100 text-rose-800', icon: Icons.Camera },
   [Category.Technology]: { color: 'bg-indigo-100 text-indigo-800', icon: Icons.Smartphone },
-  [Category.Lifestyle]: { color: 'bg-orange-100 text-indigo-800', icon: Icons.Globe },
+  [Category.Lifestyle]: { color: 'bg-orange-100 text-orange-800', icon: Icons.Globe },
   [Category.Journal]: { color: 'bg-stone-200 text-stone-800', icon: Icons.FileText },
 };
 
@@ -82,10 +84,12 @@ const NotificationToast = ({ message, onClose }: { message: string | null, onClo
 
     if (!message) return null;
 
+    const isError = /failed|error/i.test(message);
+
     return (
         <div className="fixed bottom-6 right-6 z-[100] bg-stone-900 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-slide-up">
-            <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-stone-900">
-                <Icons.Check size={16} />
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white ${isError ? 'bg-red-500' : 'bg-emerald-500 text-stone-900'}`}>
+                {isError ? <Icons.X size={16} /> : <Icons.Check size={16} />}
             </div>
             <p className="font-medium text-sm">{message}</p>
             <button onClick={onClose} className="ml-2 text-stone-500 hover:text-white"><Icons.X size={14}/></button>
@@ -201,6 +205,7 @@ const Footer = ({ onOpenNewsletter, onNavigate }: { onOpenNewsletter: () => void
 const NewsletterModal = ({ isOpen, onClose, onSubscribe, currentUser }: { isOpen: boolean, onClose: () => void, onSubscribe: (email: string) => void, currentUser: User | null }) => {
     const [email, setEmail] = useState('');
     const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'already_subscribed'>('idle');
+    const [emailError, setEmailError] = useState<string | null>(null);
     const form = useRef<HTMLFormElement>(null);
 
     useEffect(() => {
@@ -213,6 +218,7 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe, currentUser }: { isOpen
     useEffect(() => {
         if (isOpen) {
             setStatus('idle');
+            setEmailError(null);
         }
     }, [isOpen]);
 
@@ -263,8 +269,9 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe, currentUser }: { isOpen
         } catch (error: any) {
             console.error('EmailJS Failed:', error);
             const errorText = parseError(error);
-            alert(`Oops! Failed to send confirmation email.\nReason: ${errorText}`);
             setStatus('idle');
+            // Show inline error below the form
+            setEmailError(`Failed to send confirmation email: ${errorText}`);
         }
     };
 
@@ -318,6 +325,9 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe, currentUser }: { isOpen
                                     <>Processing...</>
                                 ) : 'Subscribe'}
                             </button>
+                            {emailError && (
+                                <p className="mt-3 text-sm text-red-600 text-center">{emailError}</p>
+                            )}
                         </form>
                     </>
                 )}
@@ -326,8 +336,8 @@ const NewsletterModal = ({ isOpen, onClose, onSubscribe, currentUser }: { isOpen
     );
 };
 
-// Admin email constant - only this email gets admin access
-const ADMIN_EMAIL = 'roshni.nekkanti@gmail.com';
+// Admin email constant — sourced from env var so it is not a hardcoded literal in the bundle
+const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || 'roshni.nekkanti@gmail.com';
 
 // Helper function to decode JWT token from Google
 const decodeJwtPayload = (token: string): any => {
@@ -348,7 +358,6 @@ const decodeJwtPayload = (token: string): any => {
 };
 
 const LoginView = ({ onLogin }: { onLogin: (u: User) => void }) => {
-    const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const googleButtonRef = useRef<HTMLDivElement>(null);
     
@@ -365,13 +374,14 @@ const LoginView = ({ onLogin }: { onLogin: (u: User) => void }) => {
         let isMounted = true;
         
         // Handle the Google Sign-In credential response
-        const handleCredentialResponse = (response: any) => {
+        const handleCredentialResponse = async (response: any) => {
             if (!isMounted) return;
             
             try {
                 const payload = decodeJwtPayload(response.credential);
                 
                 if (!payload || !payload.email) {
+                    if (isMounted) setError('Could not read account information. Please try again.');
                     return;
                 }
                 
@@ -379,7 +389,17 @@ const LoginView = ({ onLogin }: { onLogin: (u: User) => void }) => {
                 const userName = payload.name || payload.email.split('@')[0];
                 const userPicture = payload.picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=random`;
                 
-                // Determine if user is admin based on email
+                // Sign in with Firebase Auth so request.auth is populated in Firestore Security Rules.
+                // This is best-effort — if Firebase Auth provider is not yet enabled in the console,
+                // we log the error but still allow the user to proceed with the app.
+                try {
+                    const googleCredential = GoogleAuthProvider.credential(response.credential);
+                    await signInWithCredential(auth, googleCredential);
+                } catch (firebaseAuthError) {
+                    console.warn('Firebase Auth sign-in failed (check Google provider is enabled in Firebase Console):', firebaseAuthError);
+                }
+                
+                // Determine if user is admin based on email — computed fresh every login, never from storage
                 const isAdmin = userEmail === ADMIN_EMAIL;
                 
                 const user: User = {
@@ -394,6 +414,7 @@ const LoginView = ({ onLogin }: { onLogin: (u: User) => void }) => {
                 onLoginRef.current(user);
             } catch (e) {
                 console.error('Google Sign-In error:', e);
+                if (isMounted) setError('Sign-in failed. Please try again.');
             }
         };
         
@@ -473,17 +494,10 @@ const LoginView = ({ onLogin }: { onLogin: (u: User) => void }) => {
                     </div>
                 )}
 
-                {loading ? (
-                    <div className="flex items-center justify-center py-4">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-900"></div>
-                        <span className="ml-3 text-stone-600">Signing in...</span>
-                    </div>
-                ) : (
-                    <div className="flex justify-center">
-                        {/* Google Sign-In Button rendered here */}
-                        <div ref={googleButtonRef}></div>
-                    </div>
-                )}
+                <div className="flex justify-center">
+                    {/* Google Sign-In Button rendered here */}
+                    <div ref={googleButtonRef}></div>
+                </div>
                 
                 <p className="mt-8 text-xs text-stone-400">
                     By continuing, you agree to our Terms of Service and Privacy Policy.
@@ -570,21 +584,33 @@ const AboutView = ({ aboutImage, signatureImage }: { aboutImage: string, signatu
 const AdminSettings = ({ settings, onSave, onCancel }: { settings: SiteSettings, onSave: (s: SiteSettings) => void, onCancel: () => void }) => {
     const [formData, setFormData] = useState(settings);
 
+    const [uploadError, setUploadError] = useState<string | null>(null);
+
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, key: 'heroImage' | 'aboutImage' | 'signatureImage') => {
         const file = e.target.files?.[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setFormData({ ...formData, [key]: reader.result as string });
-            };
-            reader.readAsDataURL(file);
+        if (!file) return;
+        if (file.size > 300 * 1024) {
+            setUploadError(`"${file.name}" is too large (max 300 KB). Please resize it first or use a URL instead.`);
+            e.target.value = '';
+            return;
         }
+        setUploadError(null);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            setFormData(prev => ({ ...prev, [key]: reader.result as string }));
+        };
+        reader.readAsDataURL(file);
     };
 
     return (
         <div className="max-w-2xl mx-auto px-6 py-12 animate-fade-in">
             <h1 className="text-3xl font-serif font-bold text-stone-900 mb-8">Site Settings</h1>
-            
+            {uploadError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                    {uploadError}
+                    <button onClick={() => setUploadError(null)} className="ml-2 underline">Dismiss</button>
+                </div>
+            )}
             <div className="space-y-6">
                 <div>
                     <label className="block text-sm font-bold text-stone-700 mb-2">Site Name</label>
@@ -704,9 +730,19 @@ const CommentSection = ({ postId, currentUser, onRestricted }: { postId: string,
     const [newComment, setNewComment] = useState('');
     const [replyingTo, setReplyingTo] = useState<string | null>(null);
     const [replyText, setReplyText] = useState<{ [key: string]: string }>({});
-    const [loading, setLoading] = useState(false);
+    const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
     const [emojiPickerOpen, setEmojiPickerOpen] = useState<{ [commentId: string]: boolean }>({});
     const [imageErrors, setImageErrors] = useState<Set<string>>(new Set());
+    const [commentError, setCommentError] = useState<string | null>(null);
+
+    const setLoading = (id: string, on: boolean) => {
+        setLoadingIds(prev => {
+            const next = new Set(prev);
+            if (on) next.add(id); else next.delete(id);
+            return next;
+        });
+    };
+    const isLoading = (id: string) => loadingIds.has(id);
 
     const loadComments = async () => {
         try {
@@ -737,38 +773,36 @@ const CommentSection = ({ postId, currentUser, onRestricted }: { postId: string,
         e.preventDefault();
         if (!currentUser) { onRestricted(); return; }
         if (!newComment.trim()) return;
-        setLoading(true);
+        setCommentError(null);
+        setLoading('new-comment', true);
         try {
             await db.addComment(postId, currentUser, newComment);
-            // Small delay to ensure Firestore has processed the write
             await new Promise(resolve => setTimeout(resolve, 100));
-            // Reload all comments to get proper structure with reactions
             const updatedComments = await db.getComments(postId, currentUser.id);
             setComments(updatedComments);
             setNewComment('');
         } catch (error) {
             console.error('Error adding comment:', error);
-            alert('Failed to post comment. Please try again.');
-        } finally { setLoading(false); }
+            setCommentError('Failed to post comment. Please try again.');
+        } finally { setLoading('new-comment', false); }
     };
 
     const handleReply = async (parentId: string, replyContent: string) => {
         if (!currentUser) { onRestricted(); return; }
         if (!replyContent.trim()) return;
-        setLoading(true);
+        setCommentError(null);
+        setLoading(parentId, true);
         try {
             await db.addComment(postId, currentUser, replyContent, parentId);
-            // Small delay to ensure Firestore has processed the write
             await new Promise(resolve => setTimeout(resolve, 100));
-            // Reload comments to get nested structure
             const updatedComments = await db.getComments(postId, currentUser.id);
             setComments(updatedComments);
             setReplyText({ ...replyText, [parentId]: '' });
             setReplyingTo(null);
         } catch (error) {
             console.error('Error adding reply:', error);
-            alert('Failed to post reply. Please try again.');
-        } finally { setLoading(false); }
+            setCommentError('Failed to post reply. Please try again.');
+        } finally { setLoading(parentId, false); }
     };
 
     const handleReaction = async (commentId: string, reactionType: string) => {
@@ -822,21 +856,12 @@ const CommentSection = ({ postId, currentUser, onRestricted }: { postId: string,
         });
         
         try {
-            console.log('Calling toggleReaction:', { postId, commentId, userId: currentUser.id, reactionType });
-            const result = await db.toggleReaction(postId, commentId, currentUser.id, reactionType);
-            console.log('Toggle reaction result:', result);
-            
-            // Longer delay to ensure Firestore has processed the write and indexes are updated
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            // Reload comments to sync with server
+            await db.toggleReaction(postId, commentId, currentUser.id, reactionType);
             const updatedComments = await db.getComments(postId, currentUser.id);
-            console.log('Reloaded comments:', updatedComments.length);
-            console.log('First comment reactions:', updatedComments[0]?.reactions);
             setComments(updatedComments);
         } catch (error) {
             console.error('Error toggling reaction:', error);
-            alert(`Failed to save reaction: ${error instanceof Error ? error.message : String(error)}`);
+            setCommentError(`Failed to save reaction. Please try again.`);
             // Reload on error to revert optimistic update
             try {
                 const updatedComments = await db.getComments(postId, currentUser.id);
@@ -1015,10 +1040,10 @@ const CommentSection = ({ postId, currentUser, onRestricted }: { postId: string,
                                 <div className="flex gap-2 mt-2">
                                     <button
                                         onClick={() => handleReply(comment.id, replyText[comment.id] || '')}
-                                        disabled={!replyText[comment.id]?.trim() || loading}
+                                        disabled={!replyText[comment.id]?.trim() || isLoading(comment.id)}
                                         className="bg-stone-900 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-stone-800 disabled:opacity-50 transition-colors"
                                     >
-                                        {loading ? 'Posting...' : 'Post Reply'}
+                                        {isLoading(comment.id) ? 'Posting...' : 'Post Reply'}
                                     </button>
                                     <button
                                         onClick={() => {
@@ -1056,19 +1081,25 @@ const CommentSection = ({ postId, currentUser, onRestricted }: { postId: string,
                     onChange={e => setNewComment(e.target.value)}
                     placeholder={currentUser ? "Share your thoughts..." : "Please login to comment..."}
                     className="w-full bg-stone-50 rounded-xl p-4 min-h-[120px] outline-none border border-transparent focus:border-stone-200 focus:bg-white transition-all resize-none"
-                    disabled={loading}
+                    disabled={isLoading('new-comment')}
                 />
                 <div className="absolute bottom-4 right-4">
                         <button 
                             type="submit" 
                             onClick={!currentUser ? (e) => { e.preventDefault(); onRestricted(); } : undefined} 
-                            disabled={(!newComment.trim() && !!currentUser) || loading} 
+                            disabled={(!newComment.trim() && !!currentUser) || isLoading('new-comment')} 
                             className="bg-stone-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-stone-800 disabled:opacity-50 transition-colors"
                         >
-                            {loading ? 'Posting...' : 'Post Comment'}
+                            {isLoading('new-comment') ? 'Posting...' : 'Post Comment'}
                         </button>
                 </div>
             </form>
+            {commentError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                    {commentError}
+                    <button onClick={() => setCommentError(null)} className="ml-2 underline">Dismiss</button>
+                </div>
+            )}
             <div className="space-y-8">
                 {comments.map(comment => renderComment(comment))}
             </div>
@@ -1133,8 +1164,9 @@ const HomeView: React.FC<{
     posts: BlogPost[]; 
     onPostClick: (id: string) => void; 
     searchQuery: string;
+    setSearchQuery: (q: string) => void;
     heroImage: string;
-}> = ({ posts, onPostClick, searchQuery, heroImage }) => {
+}> = ({ posts, onPostClick, searchQuery, setSearchQuery, heroImage }) => {
     const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
     
     const filteredPosts = useMemo(() => {
@@ -1166,6 +1198,11 @@ const HomeView: React.FC<{
                         <span className="inline-block py-1 px-3 rounded-full bg-white/20 backdrop-blur-sm text-stone-900 text-xs font-semibold uppercase tracking-widest mb-4 border border-white/30">Welcome to Ro-shines</span>
                         <h1 className="text-5xl md:text-7xl font-serif font-bold text-stone-900 mb-6 drop-shadow-sm">Stories by Roshni</h1>
                         <p className="text-lg md:text-xl text-stone-700 max-w-2xl mx-auto font-light">Exploring the intersection of design, culture, and conscious living.</p>
+                        <p className="text-xs md:text-sm max-w-xs font-serif italic mt-3 text-rose-500 text-center mx-auto">
+                            <span className="bg-rose-200/60 px-3 py-1 rounded-md leading-relaxed select-none">
+                                roses are red, violets are blue, i patched the garden, no entry for you 🌹<br />the garden is tended, the gate is locked, bloom season is over for uninvited guests 🌸
+                            </span>
+                        </p>
                     </div>
                 </section>
             )}
@@ -1211,7 +1248,7 @@ const HomeView: React.FC<{
                     <div className="text-center py-20 text-stone-400">
                         <Icons.Coffee size={48} className="mx-auto mb-4 opacity-50"/>
                         <p>No stories found.</p>
-                        {searchQuery && <button onClick={() => window.location.reload()} className="mt-4 text-stone-800 underline">Clear Search</button>}
+                        {searchQuery && <button onClick={() => setSearchQuery('')} className="mt-4 text-stone-800 underline">Clear Search</button>}
                     </div>
                 )}
             </div>
@@ -1251,21 +1288,32 @@ interface AdminDashboardProps {
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ posts, onEdit, onNew, onDelete, onToggleStatus, onOpenSettings }) => {
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'stories' | 'subscribers'>('stories');
+  const [activeTab, setActiveTab] = useState<'stories' | 'subscribers' | 'analytics'>('stories');
   const [subscribers, setSubscribers] = useState<string[]>([]);
+  const [pageViews, setPageViews] = useState<{ path: string; count: number }[]>([]);
+  const [totalVisitors, setTotalVisitors] = useState(0);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   useEffect(() => {
       if (activeTab === 'subscribers') {
           db.getSubscribers().then(setSubscribers);
       }
+      if (activeTab === 'analytics') {
+          db.getPageViews().then(setPageViews);
+          db.getTotalVisitors().then(setTotalVisitors);
+      }
   }, [activeTab]);
 
-  const handleSendNewsletter = () => {
-      const bcc = subscribers.join(',');
-      const subject = encodeURIComponent("Latest Updates from Ro-shines");
-      const body = encodeURIComponent("Hello,\n\nI just published a new story on the blog! \n\nCheck it out here: " + window.location.origin + "\n\nWarmly,\nRoshni");
-      window.location.href = `mailto:?bcc=${bcc}&subject=${subject}&body=${body}`;
-  }
+  const handleCopyBCC = () => {
+      const bcc = subscribers.join(', ');
+      navigator.clipboard.writeText(bcc).then(() => {
+          setCopySuccess(true);
+          setTimeout(() => setCopySuccess(false), 2500);
+      }).catch(() => {
+          setCopySuccess(false);
+          alert('Could not access clipboard. Please copy the emails manually.');
+      });
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-12 animate-fade-in">
@@ -1302,6 +1350,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ posts, onEdit, onNew, o
             className={`pb-4 text-sm font-bold transition-colors border-b-2 ${activeTab === 'subscribers' ? 'text-stone-900 border-stone-900' : 'text-stone-400 border-transparent hover:text-stone-600'}`}
           >
               Subscribers
+          </button>
+          <button 
+            onClick={() => setActiveTab('analytics')}
+            className={`pb-4 text-sm font-bold transition-colors border-b-2 ${activeTab === 'analytics' ? 'text-stone-900 border-stone-900' : 'text-stone-400 border-transparent hover:text-stone-600'}`}
+          >
+              Analytics
           </button>
       </div>
 
@@ -1356,6 +1410,41 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ posts, onEdit, onNew, o
                 </div>
             )}
         </div>
+      ) : activeTab === 'analytics' ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden p-8">
+              <div className="mb-8">
+                  <h2 className="text-xl font-bold text-stone-900 mb-1">Visitor Analytics</h2>
+                  <p className="text-stone-500 text-sm">Page view counts tracked per session (one record per visitor per page per session).</p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+                  <div className="p-5 bg-stone-50 rounded-xl border border-stone-100">
+                      <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-1">Total Page Views</p>
+                      <p className="text-3xl font-bold text-stone-900">{totalVisitors}</p>
+                  </div>
+                  <div className="p-5 bg-stone-50 rounded-xl border border-stone-100">
+                      <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-1">Tracked Pages</p>
+                      <p className="text-3xl font-bold text-stone-900">{pageViews.length}</p>
+                  </div>
+              </div>
+              <h3 className="text-sm font-bold text-stone-700 uppercase tracking-wider mb-4">Top Pages</h3>
+              <div className="space-y-3">
+                  {pageViews.length === 0 && <p className="text-stone-400 text-sm">No data yet. Views will appear as visitors browse.</p>}
+                  {pageViews.map(({ path, count }) => (
+                      <div key={path} className="flex items-center gap-3">
+                          <span className="text-sm text-stone-600 font-medium flex-1 truncate">{path}</span>
+                          <div className="flex items-center gap-2">
+                              <div className="h-2 rounded-full bg-stone-200 w-24 overflow-hidden">
+                                  <div
+                                      className="h-2 rounded-full bg-stone-800"
+                                      style={{ width: `${Math.min(100, (count / (pageViews[0]?.count || 1)) * 100)}%` }}
+                                  />
+                              </div>
+                              <span className="text-sm font-bold text-stone-800 w-8 text-right">{count}</span>
+                          </div>
+                      </div>
+                  ))}
+              </div>
+          </div>
       ) : (
           <div className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden p-8">
               <div className="flex justify-between items-center mb-8">
@@ -1363,11 +1452,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ posts, onEdit, onNew, o
                       <h2 className="text-xl font-bold text-stone-900">Subscriber List ({subscribers.length})</h2>
                       <p className="text-stone-500 text-sm mt-1">People who have joined your newsletter.</p>
                   </div>
-                  <button onClick={handleSendNewsletter} disabled={subscribers.length === 0} className="bg-stone-900 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-stone-800 transition-colors flex items-center gap-2 disabled:opacity-50">
-                    <Icons.Send size={16} /> Send Update
+                  <button onClick={handleCopyBCC} disabled={subscribers.length === 0} className="bg-stone-900 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-stone-800 transition-colors flex items-center gap-2 disabled:opacity-50">
+                    <Icons.Send size={16} /> {copySuccess ? 'Copied!' : 'Copy BCC List'}
                   </button>
               </div>
-              
+              {copySuccess && (
+                  <p className="text-xs text-emerald-600 mb-4">All subscriber emails copied to clipboard. Paste into your email client's BCC field.</p>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {subscribers.map((email, i) => (
                       <div key={i} className="p-4 border border-stone-100 rounded-xl bg-stone-50 flex items-center gap-3">
@@ -1467,7 +1558,7 @@ const Editor: React.FC<{
                       return;
                   }
                   
-                  setEditedPost({...editedPost, coverImage: compressedBase64});
+                  setEditedPost(prev => ({ ...prev, coverImage: compressedBase64 }));
               };
               img.src = event.target?.result as string;
           };
@@ -1650,6 +1741,7 @@ const Editor: React.FC<{
 
 const App: React.FC = () => {
   const [view, setView] = useState<ViewState>({ type: 'home' });
+  const [previousView, setPreviousView] = useState<ViewState | null>(null);
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1705,16 +1797,42 @@ const App: React.FC = () => {
       const storedSettings = localStorage.getItem('roshines_settings');
       if(storedSettings) setSiteSettings(JSON.parse(storedSettings));
 
-      // Restore User Session
+      // Restore User Session — recompute isAdmin from email, never trust stored flag
       const storedUser = localStorage.getItem('roshines_user');
       if (storedUser) {
           try {
-            setUser(JSON.parse(storedUser));
+            const parsed = JSON.parse(storedUser);
+            const restoredUser: User = {
+              ...parsed,
+              isAdmin: parsed.email === ADMIN_EMAIL
+            };
+            setUser(restoredUser);
           } catch(e) {
             console.error("Failed to restore user session");
             localStorage.removeItem('roshines_user');
           }
       }
+  }, []);
+
+  // Sync Firebase Auth state — ensures users appear in Firebase Console Authentication tab
+  useEffect(() => {
+      const unsubscribe = onAuthStateChanged(auth, (firebaseUser: any) => {
+          if (firebaseUser) {
+              // Firebase Auth session is active — record/update the user in Firestore
+              const email = firebaseUser.email || '';
+              const syncedUser: User = {
+                  id: 'google-' + firebaseUser.uid,
+                  name: firebaseUser.displayName || email.split('@')[0],
+                  email,
+                  avatar: firebaseUser.photoURL || '',
+                  isAdmin: email === ADMIN_EMAIL
+              };
+              db.recordUserLogin(syncedUser).catch(err =>
+                  console.error('Failed to sync Firebase Auth user to Firestore:', err)
+              );
+          }
+      });
+      return () => unsubscribe();
   }, []);
 
   // Save posts whenever they change - both to localStorage and Firestore
@@ -1741,16 +1859,25 @@ const App: React.FC = () => {
                 console.error('Failed to save view count:', err)
             );
         }
-    } else {
-        // Reset when navigating away from a post
-        lastViewedIdRef.current = null;
+        // Track page view for analytics
+        db.recordPageView(`/post/${postId}`, user?.id);
+    } else if (view.type === 'home') {
+        db.recordPageView('/', user?.id);
+    } else if (view.type === 'about') {
+        db.recordPageView('/about', user?.id);
     }
-  }, [view]);
+  }, [view, user?.id]);
 
   const handleLoginSuccess = (u: User) => {
       setUser(u);
-      localStorage.setItem('roshines_user', JSON.stringify(u));
-      setView({ type: 'home' });
+      // Never persist isAdmin to localStorage — always recompute from email on restore
+      const { isAdmin: _stripped, ...safeUser } = u;
+      localStorage.setItem('roshines_user', JSON.stringify(safeUser));
+      // Record login to Firestore users collection
+      db.recordUserLogin(u).catch(err => console.error('Failed to record login:', err));
+      // Redirect back to where user was before login, not always home
+      setView(previousView && previousView.type !== 'login' && previousView.type !== 'register' ? previousView : { type: 'home' });
+      setPreviousView(null);
   };
 
   const handleLogout = () => {
@@ -1770,6 +1897,7 @@ const App: React.FC = () => {
     const existing = posts.find(p => p.id === updatedPost.id);
     const isNewPublish = existing?.status !== 'published' && updatedPost.status === 'published';
 
+    // Optimistic update
     if (existing) {
       setPosts(posts.map(p => p.id === updatedPost.id ? updatedPost : p));
     } else {
@@ -1781,6 +1909,14 @@ const App: React.FC = () => {
       await db.savePost(updatedPost);
     } catch (error) {
       console.error('Error saving post to Firestore:', error);
+      // Revert optimistic update on failure
+      if (existing) {
+        setPosts(prev => prev.map(p => p.id === updatedPost.id ? existing : p));
+      } else {
+        setPosts(prev => prev.filter(p => p.id !== updatedPost.id));
+      }
+      setNotification('Failed to save post. Please try again.');
+      return;
     }
     
     setView({ type: 'admin-dashboard' });
@@ -1788,11 +1924,12 @@ const App: React.FC = () => {
     // Notify on Publish
     if(isNewPublish) {
         const subCount = await db.getSubscribersCount();
-        setNotification(`Newsletter sent to ${subCount} subscribers!`);
+        setNotification(`Story published! ${subCount} subscriber${subCount !== 1 ? 's' : ''} on your list.`);
     }
   };
 
   const handlePostDelete = async (id: string) => {
+      const original = posts.find(p => p.id === id);
       setPosts(posts.filter(p => p.id !== id));
       
       // Delete from Firestore
@@ -1800,6 +1937,9 @@ const App: React.FC = () => {
         await db.deletePost(id);
       } catch (error) {
         console.error('Error deleting post from Firestore:', error);
+        // Revert optimistic delete on failure
+        if (original) setPosts(prev => [original, ...prev]);
+        setNotification('Failed to delete post. Please try again.');
       }
   };
   
@@ -1816,11 +1956,15 @@ const App: React.FC = () => {
             await db.savePost(updated);
           } catch (error) {
             console.error('Error updating post status in Firestore:', error);
+            // Revert optimistic status toggle on failure
+            setPosts(prev => prev.map(p => p.id === id ? post : p));
+            setNotification('Failed to update post status. Please try again.');
+            return;
           }
           
           if (newStatus === 'published') {
                const subCount = await db.getSubscribersCount();
-               setNotification(`Newsletter sent to ${subCount} subscribers!`);
+               setNotification(`Story published! ${subCount} subscriber${subCount !== 1 ? 's' : ''} on your list.`);
           }
       }
   }
@@ -1828,7 +1972,7 @@ const App: React.FC = () => {
   const renderContent = () => {
     switch (view.type) {
       case 'home':
-        return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} heroImage={siteSettings.heroImage} />;
+        return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} setSearchQuery={setSearchQuery} heroImage={siteSettings.heroImage} />;
       case 'post':
         const post = posts.find(p => p.id === view.postId);
         return post ? (
@@ -1846,7 +1990,7 @@ const App: React.FC = () => {
       case 'register':
         return <LoginView onLogin={handleLoginSuccess} />;
       case 'admin-dashboard':
-        if (!user?.isAdmin) return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} heroImage={siteSettings.heroImage} />;
+        if (!user?.isAdmin) return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} setSearchQuery={setSearchQuery} heroImage={siteSettings.heroImage} />;
         return (
             <AdminDashboard 
                 posts={posts} 
@@ -1858,9 +2002,9 @@ const App: React.FC = () => {
             />
         );
       case 'admin-editor':
-        if (!user?.isAdmin) return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} heroImage={siteSettings.heroImage} />;
+        if (!user?.isAdmin) return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} setSearchQuery={setSearchQuery} heroImage={siteSettings.heroImage} />;
         const editPost = view.postId ? posts.find(p => p.id === view.postId) : {
-            id: Math.random().toString(36).substr(2, 9),
+            id: crypto.randomUUID(),
             title: '',
             excerpt: '',
             coverImage: 'https://images.unsplash.com/photo-1507646227500-4d389b0012be?auto=format&fit=crop&q=80&w=1200',
@@ -1874,10 +2018,10 @@ const App: React.FC = () => {
         } as BlogPost;
         return <Editor post={editPost!} onSave={handlePostUpdate} onCancel={() => setView({ type: 'admin-dashboard' })} />;
       case 'admin-settings':
-          if (!user?.isAdmin) return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} heroImage={siteSettings.heroImage} />;
+          if (!user?.isAdmin) return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} setSearchQuery={setSearchQuery} heroImage={siteSettings.heroImage} />;
           return <AdminSettings settings={siteSettings} onSave={handleSaveSettings} onCancel={() => setView({ type: 'admin-dashboard' })} />;
       default:
-        return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} heroImage={siteSettings.heroImage} />;
+        return <HomeView posts={posts} onPostClick={id => setView({ type: 'post', postId: id })} searchQuery={searchQuery} setSearchQuery={setSearchQuery} heroImage={siteSettings.heroImage} />;
     }
   };
 
@@ -1902,7 +2046,7 @@ const App: React.FC = () => {
       {view.type !== 'admin-editor' && <Footer onOpenNewsletter={() => setNewsletterOpen(true)} onNavigate={setView} />}
 
       <NewsletterModal isOpen={newsletterOpen} onClose={() => setNewsletterOpen(false)} onSubscribe={(email) => console.log('Subscribed:', email)} currentUser={user} />
-      <RestrictionModal isOpen={restrictionOpen} onClose={() => setRestrictionOpen(false)} onLogin={() => { setRestrictionOpen(false); setView({ type: 'login' }); }} />
+      <RestrictionModal isOpen={restrictionOpen} onClose={() => setRestrictionOpen(false)} onLogin={() => { setRestrictionOpen(false); setPreviousView(view); setView({ type: 'login' }); }} />
     </div>
   );
 };

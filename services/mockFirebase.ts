@@ -14,7 +14,8 @@ import {
   query, 
   where, 
   serverTimestamp,
-  Timestamp
+  Timestamp,
+  writeBatch
 } from 'firebase/firestore';
 
 // Collection names
@@ -23,24 +24,38 @@ const COLLECTIONS = {
   COMMENTS: 'comments',
   LIKES: 'likes',
   POSTS: 'posts',
-  REACTIONS: 'reactions'
+  REACTIONS: 'reactions',
+  PAGE_VIEWS: 'pageViews',
+  META: 'meta'
 };
+
+// Subscriber counter document path
+const SUBSCRIBER_COUNTER_DOC = 'subscriberCount';
 
 // --- Firestore Service: Subscribers ---
 
 export const subscribeUser = async (email: string): Promise<{ isNewSubscriber: boolean }> => {
+  // Basic email format validation before writing to Firestore
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    throw new Error('Please enter a valid email address.');
+  }
+  const normalizedEmail = email.trim().toLowerCase();
+
   try {
     // Check if already subscribed
     const subscribersRef = collection(db, COLLECTIONS.SUBSCRIBERS);
-    const q = query(subscribersRef, where('email', '==', email));
+    const q = query(subscribersRef, where('email', '==', normalizedEmail));
     const querySnapshot = await getDocs(q);
     
     if (querySnapshot.empty) {
       // Add new subscriber
       await addDoc(subscribersRef, {
-        email,
+        email: normalizedEmail,
         subscribedAt: serverTimestamp()
       });
+      // Increment the counter doc
+      const counterRef = doc(db, COLLECTIONS.META, SUBSCRIBER_COUNTER_DOC);
+      await setDoc(counterRef, { count: increment(1) }, { merge: true });
       return { isNewSubscriber: true };
     } else {
       return { isNewSubscriber: false };
@@ -53,6 +68,13 @@ export const subscribeUser = async (email: string): Promise<{ isNewSubscriber: b
 
 export const getSubscribersCount = async (): Promise<number> => {
   try {
+    // Read from the counter doc instead of scanning the full collection
+    const counterRef = doc(db, COLLECTIONS.META, SUBSCRIBER_COUNTER_DOC);
+    const counterDoc = await getDoc(counterRef);
+    if (counterDoc.exists()) {
+      return (counterDoc.data().count as number) || 0;
+    }
+    // Fallback: count from collection if counter doc doesn't exist yet
     const subscribersRef = collection(db, COLLECTIONS.SUBSCRIBERS);
     const querySnapshot = await getDocs(subscribersRef);
     return querySnapshot.size;
@@ -95,17 +117,12 @@ export const getComments = async (postId: string, userId?: string): Promise<Comm
       const reactionsQuery = query(reactionsRef, where('postId', '==', postId));
       const reactionsSnapshot = await getDocs(reactionsQuery);
       
-      console.log('Loading reactions for post:', postId, 'Found:', reactionsSnapshot.docs.length);
-      
       reactionsSnapshot.docs.forEach(doc => {
         const data = doc.data();
         const commentId = data.commentId;
         const reactionType = data.reactionType;
         
-        console.log('Processing reaction:', { docId: doc.id, commentId, reactionType, userId: data.userId });
-        
         if (!commentId || !reactionType) {
-          console.warn('Skipping reaction with missing data:', { commentId, reactionType, data });
           return;
         }
         
@@ -129,8 +146,6 @@ export const getComments = async (postId: string, userId?: string): Promise<Comm
         }
       });
       
-      console.log('Reactions map built:', reactionsMap);
-      console.log('User reactions map:', userReactionsMap);
     } catch (reactionError) {
       console.warn('Error loading reactions (continuing without reactions):', reactionError);
       // Continue without reactions if there's an error
@@ -143,15 +158,6 @@ export const getComments = async (postId: string, userId?: string): Promise<Comm
       if (data.userAvatar && typeof data.userAvatar === 'string' && data.userAvatar.trim() !== '') {
         userAvatar = data.userAvatar;
       }
-      
-      console.log('Loading comment:', { 
-        id: doc.id, 
-        userName: data.userName, 
-        userAvatar: data.userAvatar,
-        processedAvatar: userAvatar,
-        hasAvatarField: data.hasOwnProperty('userAvatar'),
-        avatarType: typeof data.userAvatar
-      });
       
       return {
         id: doc.id,
@@ -210,17 +216,7 @@ export const addComment = async (postId: string, user: User, content: string, pa
       commentData.parentId = parentId;
     }
     
-    console.log('Saving comment with data:', { 
-      ...commentData, 
-      userAvatar: commentData.userAvatar,
-      userAvatarLength: commentData.userAvatar?.length 
-    });
-    
     const docRef = await addDoc(commentsRef, commentData);
-    
-    // Verify what was saved
-    const savedDoc = await getDoc(docRef);
-    console.log('Comment saved, retrieved data:', savedDoc.data());
     
     return {
       id: docRef.id,
@@ -247,11 +243,8 @@ export const toggleReaction = async (postId: string, commentId: string, userId: 
       throw new Error('Missing required parameters for toggleReaction');
     }
     
-    console.log('Toggle reaction:', { postId, commentId, userId, reactionType });
-    
     const reactionsRef = collection(db, COLLECTIONS.REACTIONS);
     
-    // Query all reactions for this comment and user (simpler query, no composite index needed)
     const userReactionsQuery = query(
       reactionsRef, 
       where('commentId', '==', commentId),
@@ -259,41 +252,21 @@ export const toggleReaction = async (postId: string, commentId: string, userId: 
     );
     const userReactionsSnapshot = await getDocs(userReactionsQuery);
     
-    console.log('User reactions query executed, found:', userReactionsSnapshot.docs.length);
-    userReactionsSnapshot.docs.forEach(doc => {
-      console.log('User reaction doc:', { id: doc.id, data: doc.data() });
-    });
-    
-    // Find if user already has this reaction type
     const existingReaction = userReactionsSnapshot.docs.find(
-      doc => {
-        const data = doc.data();
-        console.log('Checking reaction:', { docId: doc.id, reactionType: data.reactionType, match: data.reactionType === reactionType });
-        return data.reactionType === reactionType;
-      }
+      doc => doc.data().reactionType === reactionType
     );
     
     if (existingReaction) {
-      // Remove reaction
-      console.log('Removing existing reaction:', existingReaction.id);
       await deleteDoc(existingReaction.ref);
       
-      // Wait a bit for deletion to propagate
-      await new Promise(resolve => setTimeout(resolve, 200));
-      
-      // Get updated count for this reaction type
       const countQuery = query(
         reactionsRef, 
         where('commentId', '==', commentId), 
         where('reactionType', '==', reactionType)
       );
       const countSnapshot = await getDocs(countQuery);
-      
-      console.log('Reaction removed, new count:', countSnapshot.size);
       return { count: countSnapshot.size, userHasReacted: false };
     } else {
-      // Add reaction
-      console.log('Adding new reaction');
       const reactionData = {
         postId,
         commentId,
@@ -301,47 +274,19 @@ export const toggleReaction = async (postId: string, commentId: string, userId: 
         reactionType,
         createdAt: serverTimestamp()
       };
-      console.log('Reaction data to save:', reactionData);
       
-      const docRef = await addDoc(reactionsRef, reactionData);
-      console.log('Reaction document created with ID:', docRef.id);
+      await addDoc(reactionsRef, reactionData);
       
-      // Verify the document was created by reading it back
-      const verifyDoc = await getDoc(docRef);
-      if (!verifyDoc.exists()) {
-        throw new Error('Failed to create reaction document - document does not exist after creation');
-      }
-      console.log('Verified reaction document exists:', verifyDoc.data());
-      
-      // Wait a bit for write to propagate and indexes to update
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Get updated count for this reaction type
       const countQuery = query(
         reactionsRef, 
         where('commentId', '==', commentId), 
         where('reactionType', '==', reactionType)
       );
       const countSnapshot = await getDocs(countQuery);
-      
-      console.log('Reaction added, count query result:', {
-        count: countSnapshot.size,
-        docs: countSnapshot.docs.map(d => ({ id: d.id, data: d.data() }))
-      });
-      
-      // Double-check: query all reactions for this comment to see what we have
-      const allReactionsQuery = query(reactionsRef, where('commentId', '==', commentId));
-      const allReactionsSnapshot = await getDocs(allReactionsQuery);
-      console.log('All reactions for comment:', allReactionsSnapshot.docs.map(d => ({ id: d.id, data: d.data() })));
-      
       return { count: countSnapshot.size, userHasReacted: true };
     }
   } catch (error) {
     console.error('Error toggling reaction:', error);
-    console.error('Error details:', {
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
-    });
     throw error;
   }
 };
@@ -387,9 +332,8 @@ export const toggleLike = async (postId: string, userId: string): Promise<{ like
 const syncPostLikesCount = async (postId: string, actualCount: number): Promise<void> => {
   try {
     const postRef = doc(db, COLLECTIONS.POSTS, postId);
-    await updateDoc(postRef, {
-      likesCount: actualCount
-    });
+    // Use setDoc with merge:true so it upserts — won't throw if the doc doesn't exist yet
+    await setDoc(postRef, { likesCount: actualCount }, { merge: true });
   } catch (error) {
     console.error('Error syncing likes count:', error);
   }
@@ -491,8 +435,24 @@ export const savePost = async (post: BlogPost): Promise<void> => {
 
 export const deletePost = async (postId: string): Promise<void> => {
   try {
-    const postRef = doc(db, COLLECTIONS.POSTS, postId);
-    await deleteDoc(postRef);
+    const batch = writeBatch(db);
+
+    // Delete the post document
+    batch.delete(doc(db, COLLECTIONS.POSTS, postId));
+
+    // Collect orphaned comments
+    const commentsSnap = await getDocs(query(collection(db, COLLECTIONS.COMMENTS), where('postId', '==', postId)));
+    commentsSnap.docs.forEach(d => batch.delete(d.ref));
+
+    // Collect orphaned likes
+    const likesSnap = await getDocs(query(collection(db, COLLECTIONS.LIKES), where('postId', '==', postId)));
+    likesSnap.docs.forEach(d => batch.delete(d.ref));
+
+    // Collect orphaned reactions
+    const reactionsSnap = await getDocs(query(collection(db, COLLECTIONS.REACTIONS), where('postId', '==', postId)));
+    reactionsSnap.docs.forEach(d => batch.delete(d.ref));
+
+    await batch.commit();
   } catch (error) {
     console.error('Error deleting post:', error);
     throw error;
@@ -512,35 +472,87 @@ export const incrementViews = async (postId: string): Promise<void> => {
   }
 };
 
-// Update likes count on the post document
-export const updatePostLikesCount = async (postId: string, delta: number): Promise<void> => {
+// --- Firestore Service: User Login Tracking ---
+
+export const recordUserLogin = async (user: User): Promise<void> => {
   try {
-    const postRef = doc(db, COLLECTIONS.POSTS, postId);
-    
-    // For decrements, check current value first to avoid negative counts
-    if (delta < 0) {
-      const postDoc = await getDoc(postRef);
-      if (postDoc.exists()) {
-        const currentCount = postDoc.data().likesCount || 0;
-        if (currentCount <= 0) {
-          return; // Don't decrement if already 0 or less
-        }
-      }
+    const userRef = doc(db, 'users', user.id);
+    const userDoc = await getDoc(userRef);
+
+    if (userDoc.exists()) {
+      await updateDoc(userRef, {
+        lastLoginAt: serverTimestamp(),
+        loginCount: increment(1),
+        name: user.name,
+        avatar: user.avatar || null,
+      });
+    } else {
+      await setDoc(userRef, {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatar: user.avatar || null,
+        firstLoginAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
+        loginCount: 1,
+      });
     }
-    
-    await updateDoc(postRef, {
-      likesCount: increment(delta)
-    });
   } catch (error) {
-    console.error('Error updating likes count:', error);
+    console.error('Error recording user login:', error);
   }
 };
 
-// Legacy functions (kept for compatibility but no longer used)
-export const loginUser = async (_email: string, _password: string): Promise<User> => {
-  throw new Error('Use Google OAuth for authentication');
+// --- Firestore Service: Page View Tracking ---
+
+export const recordPageView = async (path: string, userId?: string): Promise<void> => {
+  try {
+    // Use sessionStorage to track if this path was already recorded this session
+    const sessionKey = `pv_${path}`;
+    if (typeof window !== 'undefined' && sessionStorage.getItem(sessionKey)) {
+      return; // Already recorded this path in this session
+    }
+
+    await addDoc(collection(db, COLLECTIONS.PAGE_VIEWS), {
+      path,
+      userId: userId || null,
+      userAgent: navigator.userAgent,
+      referrer: document.referrer || null,
+      timestamp: serverTimestamp()
+    });
+
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem(sessionKey, '1');
+    }
+  } catch (error) {
+    // Page views are non-critical — never throw
+    console.error('Error recording page view:', error);
+  }
 };
 
-export const registerUser = async (_name: string, _email: string, _password: string): Promise<User> => {
-  throw new Error('Use Google OAuth for authentication');
+export const getPageViews = async (): Promise<{ path: string; count: number }[]> => {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.PAGE_VIEWS));
+    const counts: Record<string, number> = {};
+    snap.docs.forEach(d => {
+      const path = d.data().path as string;
+      counts[path] = (counts[path] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .map(([path, count]) => ({ path, count }))
+      .sort((a, b) => b.count - a.count);
+  } catch (error) {
+    console.error('Error getting page views:', error);
+    return [];
+  }
 };
+
+export const getTotalVisitors = async (): Promise<number> => {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.PAGE_VIEWS));
+    return snap.size;
+  } catch (error) {
+    console.error('Error getting visitor count:', error);
+    return 0;
+  }
+};
+

@@ -50,6 +50,10 @@
         },
       }
     </script>
+  <!-- DEV ONLY: This importmap is used by the Vite dev server (index.tsx) for bare module resolution.
+       In production, `npm run build` bundles all dependencies locally into build/assets/index-*.js 
+       and this importmap is NOT used. aistudiocdn.com is an AI Studio prototype CDN — do not 
+       add SRI hashes here since the production build does not load from this CDN at all. -->
   <script type="importmap">
 {
   "imports": {
